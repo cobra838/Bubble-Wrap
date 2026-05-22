@@ -29,6 +29,7 @@ const TYPE_OPTIONS = [
   ["tip", "Tip"]
 ];
 
+// Escape text for safe HTML insertion.
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -37,10 +38,12 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+// Normalize all newline variants to \n.
 function normalizeNewlines(text) {
   return String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
+// Parse an inline {{tag ...}} into name/args/order.
 function parseInlineTag(rawTag) {
   const body = String(rawTag || "").slice(2, -2).trim();
   const spaceIndex = body.indexOf(" ");
@@ -55,6 +58,7 @@ function parseInlineTag(rawTag) {
   return { name, args, order };
 }
 
+// Build an inline {{tag ...}} string from args.
 function buildInlineTag(name, args = {}, order = []) {
   const keys = order.length ? order : Object.keys(args);
   const parts = [name];
@@ -65,6 +69,7 @@ function buildInlineTag(name, args = {}, order = []) {
   return `{{${parts.join(" ")}}}`;
 }
 
+// Pick a stable chip color for a tag name.
 function tagColor(name) {
   const map = {
     animation: "hsl(60,75%,60%)",
@@ -91,6 +96,7 @@ function tagColor(name) {
   return `hsl(${hash % 360},70%,58%)`;
 }
 
+// Guess the default bubble type from an MSYT path.
 function inferMsytBubbleTypeFromPath(path) {
   const value = String(path || "").replaceAll("\\", "/");
   if (/(^|\/)ActorType\//.test(value)) return "item";
@@ -99,10 +105,12 @@ function inferMsytBubbleTypeFromPath(path) {
   return "dialogue";
 }
 
+// Detect choice labels like 1, 2, 0003.
 function isChoiceLabel(label) {
   return /^\d+$/.test(String(label || "").trim());
 }
 
+// Create a new empty entry for the current mode.
 function defaultEntry(mode = DOC_MODE_AEON, msytDocInfo = {}) {
   const isMsyt = mode === DOC_MODE_BCML || mode === DOC_MODE_MSYT;
   const defaultPath = msytDocInfo.defaultPath || "NewFile.msyt";
@@ -118,11 +126,13 @@ function defaultEntry(mode = DOC_MODE_AEON, msytDocInfo = {}) {
   };
 }
 
+// Split raw text into pages by pageBreak tags.
 function splitPages(raw) {
   const value = String(raw || "");
   return value ? value.split("{{pageBreak}}") : [""];
 }
 
+// Parse the simple AEON YAML entry format used here.
 function parseAeonYaml(text) {
   const normalized = normalizeNewlines(text);
   const mm = normalized.match(/^%%%\n[\s\S]*?%%%\n/);
@@ -143,26 +153,31 @@ function parseAeonYaml(text) {
   return { entries, yamlMeta };
 }
 
+// Provide a safe default status text.
 function makeStatus(text) {
   return text || "Ready";
 }
 
+// Show MSYT meta as readable JSON text.
 function stringifyMsytMeta(meta) {
   if (!meta || typeof meta !== "object") return "";
   return `${JSON.stringify(meta, null, 2)}\n`;
 }
 
+// Decide whether AEON export should include attributeText/attribute.
 function hasATR1(currentGame, yamlMeta) {
   if (currentGame === "TotK") return false;
   return !/hasATR1:\s*false/.test(String(yamlMeta || ""));
 }
 
+// Measure range text after removing hidden raw-tag nodes.
 function getTextLengthExcludingTagNodes(range) {
   const fragment = range.cloneContents();
   fragment.querySelectorAll?.("[data-raw-tag]").forEach((node) => node.remove());
   return fragment.textContent.length;
 }
 
+// Count visible text length for a node tree.
 function getVisibleTextLength(node) {
   if (!node) return 0;
   if (node.nodeType === Node.TEXT_NODE) return node.textContent.length;
@@ -175,6 +190,7 @@ function getVisibleTextLength(node) {
   return total;
 }
 
+// Find a visible-text offset inside a node subtree.
 function getVisibleOffsetWithinNode(node, targetNode, targetOffset) {
   let total = 0;
   let found = false;
@@ -226,6 +242,7 @@ function getVisibleOffsetWithinNode(node, targetNode, targetOffset) {
 }
 
 function getSelectionTextOffsets(content, range) {
+  // Translate DOM selection into visible-text offsets, ignoring hidden tag markers.
   const offsetFromPoint = (targetNode, targetOffset) => {
     if (targetNode === content) {
       let total = 0;
@@ -270,6 +287,7 @@ function getSelectionTextOffsets(content, range) {
 }
 
 function getBoundaryTag(raw, offset, dir) {
+  // Find a tag that sits exactly on the caret boundary for Backspace/Delete.
   const rawBefore = visibleOffsetToRaw(raw, offset, "before");
   const rawAfter = visibleOffsetToRaw(raw, offset, "after");
   if (rawBefore === rawAfter) return null;
@@ -278,6 +296,7 @@ function getBoundaryTag(raw, offset, dir) {
   return dir < 0 ? tags[tags.length - 1] : tags[0];
 }
 
+// Ignore reset-format tags in destructive delete logic.
 function isProtectedDeleteTag(tag) {
   if (!tag) return false;
   if (tag.name === "color") return tag.args.id === "Reset" || tag.args.id === "-1";
@@ -285,10 +304,12 @@ function isProtectedDeleteTag(tag) {
   return false;
 }
 
+// Detect non-reset format tags that own a matching reset.
 function isFormatStartTag(tag) {
   return !!tag && (tag.name === "color" || tag.name === "size") && !isProtectedDeleteTag(tag);
 }
 
+// Find the matching reset tag for a format-start tag.
 function findPairedFormatResetTag(raw, startTag) {
   if (!isFormatStartTag(startTag)) return null;
   const tags = parseRawTags(raw);
@@ -313,6 +334,7 @@ function findPairedFormatResetTag(raw, startTag) {
   return null;
 }
 
+// Remove a boundary tag and its paired reset when needed.
 function removeTagAndPairedReset(raw, tag) {
   if (!tag) return raw;
   const out = raw.slice(0, tag.start) + raw.slice(tag.end);
@@ -325,6 +347,7 @@ function removeTagAndPairedReset(raw, tag) {
 }
 
 const FORMAT_DEFS = {
+  // Shared emit/parse rules for inline formatting tags.
   color: {
     tagName: "color",
     extract: (inner) => {
@@ -345,6 +368,7 @@ const FORMAT_DEFS = {
   }
 };
 
+// Collect active format runs across visible text.
 function getFormatRuns(raw, type) {
   const def = FORMAT_DEFS[type];
   const runs = [];
@@ -383,6 +407,7 @@ function getFormatRuns(raw, type) {
   return runs;
 }
 
+// Drop empty color/size tag pairs left after edits.
 function stripEmptyFormatPairs(raw) {
   let next = String(raw || "");
   let prev = "";
@@ -395,6 +420,7 @@ function stripEmptyFormatPairs(raw) {
   return next;
 }
 
+// Apply color/size formatting to a visible-text range.
 function applyFormatToRange(raw, startOff, endOff, type, value) {
   if (startOff < 0 || endOff < 0 || startOff >= endOff) return raw;
   const def = FORMAT_DEFS[type];
@@ -460,6 +486,7 @@ function applyFormatToRange(raw, startOff, endOff, type, value) {
 }
 
 function normalizeLeadingFormatDeletion(oldRaw, nextRaw, edit, startOff, oldEndOff, newEndOff) {
+  // Prevent leading format tags from sticking to text after destructive edits.
   if (edit && ["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(edit.inputType)) {
     for (const type of ["color", "size"]) {
       const run = getFormatRuns(oldRaw, type).find((item) => item.start === edit.start && item.end > edit.start);
@@ -482,6 +509,7 @@ function normalizeLeadingFormatDeletion(oldRaw, nextRaw, edit, startOff, oldEndO
 }
 
 function capturePendingInputEdit(content, inputType) {
+  // Snapshot the intended visible-text edit before contenteditable mutates the DOM.
   const selection = getSelection();
   if (!selection || selection.rangeCount === 0) {
     content._pendingInputEdit = null;
@@ -511,17 +539,20 @@ function capturePendingInputEdit(content, inputType) {
 const _undoStacks = new WeakMap();
 const _redoStacks = new WeakMap();
 
+// Read the undo stack for one bubble.
 function getUndoStack(content) {
   if (!_undoStacks.has(content)) _undoStacks.set(content, []);
   return _undoStacks.get(content);
 }
 
+// Read the redo stack for one bubble.
 function getRedoStack(content) {
   if (!_redoStacks.has(content)) _redoStacks.set(content, []);
   return _redoStacks.get(content);
 }
 
 function saveUndo(content) {
+  // Undo stores raw bubble text, not browser DOM history.
   if (!content?.classList?.contains("bubble-content")) return;
   const raw = content.dataset.raw ?? serializeContent(content);
   const stack = getUndoStack(content);
@@ -531,6 +562,7 @@ function saveUndo(content) {
 }
 
 export default class DocumentApp {
+  // Cache DOM references and boot the editor shell.
   constructor() {
     this.currentGame = "BotW";
     this.currentDocMode = DOC_MODE_AEON;
@@ -595,6 +627,7 @@ export default class DocumentApp {
     this.setStatus("Ready");
   }
 
+  // Wire global UI and document-level event handlers.
   bindEvents() {
     this.fileInput.addEventListener("change", (event) => this.handleFileInput(event));
     this.metaTextarea.addEventListener("input", () => {
@@ -672,6 +705,7 @@ export default class DocumentApp {
     });
   }
 
+  // Expose HTML onclick hooks on window.
   exposeGlobals() {
     window.selectGame = (game) => this.selectGame(game);
     window.setExportMode = (mode) => this.setExportMode(mode);
@@ -692,12 +726,14 @@ export default class DocumentApp {
     window.deleteTE = () => this.deleteTE();
   }
 
+  // Restore the last selected game from localStorage.
   restoreGame() {
     const saved = localStorage.getItem(STORAGE_GAME_KEY);
     if (saved === "TotK") this.currentGame = "TotK";
     this.syncGameUi();
   }
 
+  // Refresh game-specific UI and popup palettes.
   syncGameUi() {
     setRawContentGame(this.currentGame);
     this.btnBotw.classList.toggle("active", this.currentGame === "BotW");
@@ -705,6 +741,7 @@ export default class DocumentApp {
     this.chains.forEach((chain) => chain.bubbles.forEach((bubble) => bubble.fmtPopup && this.buildFmtPopup(bubble.fmtPopup)));
   }
 
+  // Refresh mode-dependent buttons and visibility.
   syncDocModeUi() {
     const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
     const onlyBcml = this.currentDocMode === DOC_MODE_BCML;
@@ -725,6 +762,7 @@ export default class DocumentApp {
     this.chains.forEach((chain) => this.updateChainModeUi(chain));
   }
 
+  // Refresh the meta panel contents for the current mode.
   syncMetaPanel() {
     if (this.currentDocMode === DOC_MODE_AEON) {
       this.metaTextarea.readOnly = false;
@@ -744,6 +782,7 @@ export default class DocumentApp {
     }\n`;
   }
 
+  // Switch between BotW and TotK, with MSYT guard rails.
   selectGame(game) {
     if ((this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML) && game !== "BotW") {
       this.setStatus("⚠ MSYT is supported only for BotW");
@@ -756,20 +795,24 @@ export default class DocumentApp {
     // this.setStatus(`Game: ${game}`);
   }
 
+  // Change the export target format.
   setExportMode(mode) {
     this.exportMode = mode;
     this.syncDocModeUi();
     // this.setStatus(`Export mode: ${mode}`);
   }
 
+  // Resolve the actual export mode for the current game.
   getEffectiveExportMode() {
     return this.currentGame === "BotW" ? this.exportMode : DOC_MODE_AEON;
   }
 
+  // Refresh the autosplit button label.
   syncAutoSplitUi() {
     this.btnAutosplit.textContent = `✂ Auto-split: ${this.autoSplit ? "ON" : "OFF"}`;
   }
 
+  // Rebuild the inline format popup for the current game palette.
   buildFmtPopup(popup) {
     popup.innerHTML = "";
     const palette = getColorCss(this.currentGame);
@@ -823,6 +866,7 @@ export default class DocumentApp {
     }
   }
 
+  // Save the current bubble selection for later tag insertion.
   captureTagSelection(content = this.activeContent, fallbackToEnd = false) {
     if (!content) return null;
     const selection = getSelection();
@@ -841,6 +885,7 @@ export default class DocumentApp {
     return this.tagSelection;
   }
 
+  // Open the GCF-driven tag picker.
   openTP() {
     if (this.currentDocMode !== DOC_MODE_AEON) {
       this.setStatus("GCF Tag picker is for AEON YAML");
@@ -872,10 +917,12 @@ export default class DocumentApp {
     }, 40);
   }
 
+  // Close the tag picker.
   closeTP() {
     this.tagPicker.classList.remove("open");
   }
 
+  // Filter visible tag picker items.
   filterTP(query) {
     const q = String(query || "").toLowerCase();
     this.tpList.querySelectorAll(".tp-item").forEach((item) => {
@@ -884,10 +931,12 @@ export default class DocumentApp {
     this.tpSetHi(0);
   }
 
+  // Return currently visible picker rows.
   tpVisible() {
     return [...this.tpList.querySelectorAll(".tp-item")].filter((item) => item.style.display !== "none");
   }
 
+  // Move the picker highlight to one visible row.
   tpSetHi(index) {
     const items = this.tpVisible();
     items.forEach((item) => item.classList.remove("tp-hi"));
@@ -897,10 +946,12 @@ export default class DocumentApp {
     }
   }
 
+  // Get the highlighted picker row index.
   tpHiIdx() {
     return this.tpVisible().findIndex((item) => item.classList.contains("tp-hi"));
   }
 
+  // Handle keyboard navigation inside the tag picker.
   tpKey(event) {
     const items = this.tpVisible();
     if (!items.length) return;
@@ -920,6 +971,7 @@ export default class DocumentApp {
     }
   }
 
+  // Insert the chosen GCF tag into the saved bubble selection.
   insertFromTP(tagDef) {
     this.closeTP();
     const saved = this.tagSelection;
@@ -958,6 +1010,7 @@ export default class DocumentApp {
     this.setStatus(`✓ Inserted: {{${tagDef.name}}}`);
   }
 
+  // Show or hide the format popup for the active selection.
   checkFmtSel(content, popup) {
     const selection = getSelection();
     if (
@@ -974,6 +1027,7 @@ export default class DocumentApp {
     }
   }
 
+  // Toggle empty-state vs entry-list UI.
   syncEntryUi() {
     const hasEntries = this.chains.length > 0;
     this.emptyState.hidden = hasEntries;
@@ -982,25 +1036,30 @@ export default class DocumentApp {
     else this.editorArea.querySelector("#add-chain-btn")?.remove();
   }
 
+  // Turn autosplit on or off.
   toggleAutoSplit() {
     this.autoSplit = !this.autoSplit;
     localStorage.setItem("msbt_autosplit", this.autoSplit ? "1" : "0");
     this.syncAutoSplitUi();
   }
 
+  // Write a message to the status bar.
   setStatus(text) {
     this.statusbar.textContent = makeStatus(text);
   }
 
+  // Build a fresh empty entry object.
   makeNewEntry() {
     return defaultEntry(this.currentDocMode, this.msytDocInfo);
   }
 
+  // Read the chosen file input file.
   handleFileInput(event) {
     const file = event.target.files?.[0];
     if (file) this.loadFile(file);
   }
 
+  // Load local GCF files into the in-memory registry.
   async loadGcfColorMaps() {
     for (const game of ["BotW", "TotK"]) {
       try {
@@ -1013,12 +1072,14 @@ export default class DocumentApp {
     this.syncGameUi();
   }
 
+  // Load a file object into the editor.
   async loadFile(file) {
     const text = await file.text();
     this.fileDrop.textContent = `📂 ${file.name}`;
     this.loadText(text);
   }
 
+  // Detect the incoming format and load it.
   loadText(text) {
     const normalized = normalizeNewlines(text);
     const trimmed = normalized.trimStart();
@@ -1095,6 +1156,7 @@ export default class DocumentApp {
     this.setStatus(`Loaded ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
   }
 
+  // Rebuild the whole document from entry data.
   renderDoc(entries) {
     this.chains = [];
     this.chainList.innerHTML = "";
@@ -1109,6 +1171,7 @@ export default class DocumentApp {
     this.syncEntryUi();
   }
 
+  // Append the bottom "Create Entry" button.
   appendAddChainButton() {
     this.chainList.querySelector("#add-chain-btn")?.remove();
     const btn = document.createElement("div");
@@ -1118,6 +1181,7 @@ export default class DocumentApp {
     this.chainList.appendChild(btn);
   }
 
+  // Refresh page separator labels inside one chain.
   updatePageSepLabels(chain) {
     let pageNumber = 1;
     chain.bubbles.forEach((bubble, index) => {
@@ -1138,17 +1202,20 @@ export default class DocumentApp {
     });
   }
 
+  // Sync sidebar text for one entry.
   updateSidebarItem(chain) {
     chain.sidebarItem.querySelector(".sb-label").textContent = chain.labelInput.value || "";
     chain.sidebarItem.querySelector(".sb-attr").textContent = chain.attrInput.value || "";
     chain.sidebarItem.classList.toggle("is-choice", isChoiceLabel(chain.labelInput.value));
   }
 
+  // Refresh per-chain UI that depends on the current mode.
   updateChainModeUi(chain) {
     chain.attrInput.placeholder = chain.attrKey || (this.exportMode === DOC_MODE_AEON ? "attributeText" : "attributes");
     this.updateSidebarItem(chain);
   }
 
+  // Ensure BCML locale/path containers exist before inserting entries.
   ensureBcmlContainers(locale, path) {
     const localeValue = locale || this.msytDocInfo.defaultLocale || "EUen";
     const pathValue = path || this.msytDocInfo.defaultPath || "NewFile.msyt";
@@ -1258,6 +1325,7 @@ export default class DocumentApp {
     };
   }
 
+  // Remove now-empty BCML wrapper containers.
   cleanupBcmlContainers(chain) {
     if (chain.pathSection && !chain.pathSection.querySelector(".chain")) {
       chain.pathSection.remove();
@@ -1269,12 +1337,14 @@ export default class DocumentApp {
     }
   }
 
+  // Remove one chain from DOM and state.
   removeChain(chain) {
     chain.section.remove();
     chain.sidebarItem.remove();
     this.chains = this.chains.filter((item) => item !== chain);
   }
 
+  // Delete a whole BCML locale group.
   deleteBcmlLocale(localeSection, sidebarLocaleSection) {
     const doomed = this.chains.filter((chain) => chain.localeSection === localeSection);
     doomed.forEach((chain) => this.removeChain(chain));
@@ -1285,6 +1355,7 @@ export default class DocumentApp {
     this.setStatus("Locale deleted");
   }
 
+  // Delete a whole BCML path group.
   deleteBcmlPath(pathSection, sidebarPathSection, localeSection, sidebarLocaleSection) {
     const doomed = this.chains.filter((chain) => chain.pathSection === pathSection);
     doomed.forEach((chain) => this.removeChain(chain));
@@ -1299,6 +1370,7 @@ export default class DocumentApp {
     this.setStatus("Group deleted");
   }
 
+  // Create one entry section and all of its bubbles.
   createChain(entry = this.makeNewEntry(), containers = null) {
     const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
     const msytLocale = entry.msytLocale || this.msytDocInfo.defaultLocale || "EUen";
@@ -1400,6 +1472,7 @@ export default class DocumentApp {
     return chain;
   }
 
+  // Delete one entry chain.
   deleteChain(chain) {
     this.removeChain(chain);
     if (this.currentDocMode === DOC_MODE_BCML) this.cleanupBcmlContainers(chain);
@@ -1409,6 +1482,7 @@ export default class DocumentApp {
     this.setStatus("Entry deleted");
   }
 
+  // Apply a bubble type to all bubbles in a chain.
   applyChainType(chain, type, initial = false) {
     const config = BubbleType[type];
     if (!config) return;
@@ -1427,6 +1501,7 @@ export default class DocumentApp {
     // this.setStatus(`Type: ${type}`);
   }
 
+  // Apply one bubble type to one rendered bubble.
   applyBubbleType(bubble, type) {
     const bubbleEl = bubble.bubble;
     bubbleEl.dataset.type = type;
@@ -1436,6 +1511,7 @@ export default class DocumentApp {
     this.updateBubbleOverflow(bubble, type);
   }
 
+  // Place the caret at the visible start or end of a bubble.
   placeCaretAtBoundary(content, atStart) {
     const target = content.firstElementChild || content.appendChild(document.createElement("div"));
     const selection = getSelection();
@@ -1446,6 +1522,7 @@ export default class DocumentApp {
     selection.addRange(range);
   }
 
+  // Restore a collapsed caret from a visible-text offset.
   setCaretAtVisibleOffset(content, offset) {
     const blocks = Array.from(content.childNodes);
     let remaining = Math.max(0, offset);
@@ -1510,6 +1587,7 @@ export default class DocumentApp {
     this.placeCaretAtBoundary(content, false);
   }
 
+  // Map a visible-text offset back to a DOM node/offset pair.
   locateVisibleDomPosition(content, offset) {
     const blocks = Array.from(content.childNodes);
     let remaining = Math.max(0, offset);
@@ -1544,6 +1622,7 @@ export default class DocumentApp {
     return { node: content, offset: content.childNodes.length };
   }
 
+  // Restore a range selection from visible-text offsets.
   setSelectionVisibleOffsets(content, start, end) {
     const from = Math.min(start, end);
     const to = Math.max(start, end);
@@ -1558,6 +1637,7 @@ export default class DocumentApp {
     selection.addRange(range);
   }
 
+  // Place the caret from mouse coordinates, with fallbacks.
   placeCaretFromPoint(content, clientX, clientY) {
     const selection = getSelection();
     let placed = false;
@@ -1604,6 +1684,7 @@ export default class DocumentApp {
     this.placeCaretAtBoundary(content, clientX <= contentRect.left + contentRect.width / 2);
   }
 
+  // Convert a mouse point to a visible-text offset.
   getVisibleOffsetFromPoint(content, clientX, clientY) {
     this.placeCaretFromPoint(content, clientX, clientY);
     const selection = getSelection();
@@ -1613,6 +1694,7 @@ export default class DocumentApp {
     return getSelectionTextOffsets(content, range).startOff;
   }
 
+  // Re-render one bubble from a raw undo/redo snapshot.
   restoreUndoState(content, raw) {
     renderRawToContent(content, raw);
     content.dataset.raw = raw;
@@ -1623,6 +1705,7 @@ export default class DocumentApp {
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
   }
 
+  // Apply one undo step to a bubble.
   doUndo(content) {
     const stack = getUndoStack(content);
     if (!stack.length) return;
@@ -1631,6 +1714,7 @@ export default class DocumentApp {
     this.restoreUndoState(content, stack.pop());
   }
 
+  // Apply one redo step to a bubble.
   doRedo(content) {
     const stack = getRedoStack(content);
     if (!stack.length) return;
@@ -1639,6 +1723,7 @@ export default class DocumentApp {
     this.restoreUndoState(content, stack.pop());
   }
 
+  // Create and mount one bubble card inside a chain.
   addBubble(chain, raw = "", afterBubble = null, joinKind = "pageBreak") {
     if (BubbleType[chain.typeSelect.value]?.isSingleton && chain.bubbles.length >= 1) return null;
 
@@ -1721,6 +1806,7 @@ export default class DocumentApp {
       this.checkFmtSel(content, fmtPopup);
     });
     content.addEventListener("beforeinput", (event) => {
+      // Handle newline and marker-edge deletes in raw first; native contenteditable gets these wrong.
       content._pendingInputEdit = null;
       capturePendingInputEdit(content, event.inputType);
       const selection = getSelection();
@@ -1836,6 +1922,7 @@ export default class DocumentApp {
     return bubbleRecord;
   }
 
+  // Delete one bubble card from a chain.
   deleteBubble(bubbleRecord) {
     const { chain, card } = bubbleRecord;
     chain.bubbles = chain.bubbles.filter((item) => item !== bubbleRecord);
@@ -1849,6 +1936,7 @@ export default class DocumentApp {
     this.setStatus("Bubble deleted");
   }
 
+  // Paste/drop plain text without rich formatting.
   insertPlaintext(event) {
     event.preventDefault();
     const text = event.clipboardData?.getData("text/plain") ?? event.dataTransfer?.getData("text/plain") ?? "";
@@ -1856,6 +1944,7 @@ export default class DocumentApp {
     document.execCommand("insertText", false, text);
   }
 
+  // Apply a raw edit and refresh all dependent bubble UI.
   applyContentRawEdit(bubbleRecord, nextRaw, caretOffset) {
     const { content, chain, fmtPopup } = bubbleRecord;
     renderRawToContent(content, nextRaw);
@@ -1869,6 +1958,7 @@ export default class DocumentApp {
     this.checkFmtSel(content, fmtPopup);
   }
 
+  // Apply inline color/size formatting to the active selection.
   applyFormat(type, value) {
     const content = this.activeContent;
     if (!content) return;
@@ -1910,6 +2000,7 @@ export default class DocumentApp {
   }
 
   syncBubbleState(bubbleRecord) {
+    // Rebuild raw from the visible-text edit delta instead of trusting DOM order.
     const content = bubbleRecord.content;
     const isIsolatedBreak = content.innerHTML === "<br>";
     const isIsolatedBreakNode =
@@ -1968,6 +2059,7 @@ export default class DocumentApp {
   }
 
   refreshChoicePills(targetChain = null) {
+    // Choice tags are shown below the entry as quick links to target labels.
     const chains = targetChain ? [targetChain] : this.chains;
     chains.forEach((chain) => {
       if (!chain.choicePills) return;
@@ -2011,17 +2103,20 @@ export default class DocumentApp {
     });
   }
 
+  // Decide whether autosplit is allowed for this chain.
   canAutoSplitChain(chain) {
     if (this.currentDocMode !== DOC_MODE_BCML) return true;
     const path = String(chain.msytPath || this.msytDocInfo.defaultPath || "");
     return path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/");
   }
 
+  // Decide whether an MSYT split may stay as a newline.
   canMsytSoftSplitStayText(chain) {
     const path = String(chain.msytPath || this.msytDocInfo.defaultPath || "");
     return path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/");
   }
 
+  // Split oversized bubble text into following bubbles.
   autoSplitBubble(bubbleRecord) {
     if (!this.autoSplit || !this.canAutoSplitChain(bubbleRecord.chain)) return;
     const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
@@ -2037,6 +2132,7 @@ export default class DocumentApp {
   }
 
   syncMetaBar(bubbleRecord) {
+    // Non-format tags are surfaced here as chips instead of inline text.
     const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
     const tags = parseRawTags(raw).filter((tag) => tag.name !== "color" && tag.name !== "size");
     bubbleRecord.metaBar.innerHTML = "";
@@ -2060,6 +2156,7 @@ export default class DocumentApp {
     });
   }
 
+  // Mark a bubble as overflowed when it exceeds type limits.
   updateBubbleOverflow(bubbleRecord, type) {
     const config = BubbleType[type];
     const content = bubbleRecord.content;
@@ -2077,6 +2174,7 @@ export default class DocumentApp {
     bubbleRecord.bubble.classList.toggle("overflow", overflow);
   }
 
+  // Open the raw tag/text editor for one bubble.
   openRaw(bubbleRecord) {
     this.rawTarget = bubbleRecord;
     this.rawTextarea.value = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
@@ -2084,11 +2182,13 @@ export default class DocumentApp {
     this.rawTextarea.focus();
   }
 
+  // Close the raw editor modal.
   closeRaw() {
     this.rawModal.classList.remove("open");
     this.rawTarget = null;
   }
 
+  // Apply raw editor changes back to the bubble.
   applyRaw() {
     if (!this.rawTarget) return;
     saveUndo(this.rawTarget.content);
@@ -2098,6 +2198,7 @@ export default class DocumentApp {
     this.setStatus("Raw applied");
   }
 
+  // Open the tag editor for one rendered tag.
   openTE(target) {
     this.editTarget = target;
     const { name, args, order } = parseInlineTag(target.rawTag);
@@ -2142,11 +2243,13 @@ export default class DocumentApp {
     this.teModal.classList.add("open");
   }
 
+  // Close the tag editor modal.
   closeTE() {
     this.teModal.classList.remove("open");
     this.editTarget = null;
   }
 
+  // Save changes from the tag editor.
   saveTE() {
     if (!this.editTarget) return;
     const bubbleRecord = this.editTarget.bubbleRecord;
@@ -2179,6 +2282,7 @@ export default class DocumentApp {
     this.setStatus("Tag saved");
   }
 
+  // Delete the tag currently edited in the tag editor.
   deleteTE() {
     if (!this.editTarget) return;
     const bubbleRecord = this.editTarget.bubbleRecord;
@@ -2195,12 +2299,14 @@ export default class DocumentApp {
     this.setStatus("Tag deleted");
   }
 
+  // Close the bubble context menu.
   closeCtx() {
     this.ctxMenu.classList.remove("open");
     this.ctxTarget = null;
     this.ctxSelection = null;
   }
 
+  // Open the context menu or tag editor from a right-click.
   handleContextMenu(event) {
     const tagNode = event.target.closest("[data-raw-tag]");
     if (tagNode) {
@@ -2242,12 +2348,14 @@ export default class DocumentApp {
     this.ctxMenu.classList.add("open");
   }
 
+  // Open raw editor from the context menu target.
   openRawFromContext() {
     if (!this.ctxTarget) return;
     this.openRaw(this.ctxTarget);
     this.closeCtx();
   }
 
+  // Insert a pause tag from the context menu.
   ctxInsertDelay(tagName) {
     if (!this.ctxTarget) return;
     const bubbleRecord = this.ctxTarget;
@@ -2270,6 +2378,7 @@ export default class DocumentApp {
     this.setStatus("Pause inserted");
   }
 
+  // Copy the target bubble raw text with tags.
   copyContextRaw() {
     if (!this.ctxTarget) return;
     const raw = this.ctxTarget.content.dataset.raw ?? serializeContent(this.ctxTarget.content);
@@ -2277,6 +2386,7 @@ export default class DocumentApp {
     this.closeCtx();
   }
 
+  // Copy the target bubble as plain text.
   copyContextPlain() {
     if (!this.ctxTarget) return;
     const raw = this.ctxTarget.content.dataset.raw ?? serializeContent(this.ctxTarget.content);
@@ -2284,6 +2394,7 @@ export default class DocumentApp {
     this.closeCtx();
   }
 
+  // Find the bubble record that owns a contenteditable node.
   findBubbleByContent(content) {
     for (const chain of this.chains) {
       const bubble = chain.bubbles.find((item) => item.content === content);
@@ -2292,6 +2403,7 @@ export default class DocumentApp {
     return null;
   }
 
+  // Serialize one chain using pageBreak separators.
   serializeChainRaw(chain) {
     let raw = "";
     chain.bubbles.forEach((bubble, index) => {
@@ -2303,6 +2415,7 @@ export default class DocumentApp {
   }
 
   serializeMsytChain(chain) {
+    // Soft splits may stay as newlines or become pageBreaks depending on the MSYT path.
     let raw = "";
     let pageRaw = "";
     chain.bubbles.forEach((bubble, index) => {
@@ -2329,6 +2442,7 @@ export default class DocumentApp {
     return raw;
   }
 
+  // Apply one bubble type to all chains.
   applyGlobalType(type) {
     if (!type) return;
     this.chains.forEach((chain) => {
@@ -2338,6 +2452,7 @@ export default class DocumentApp {
     this.setStatus(`Type applied: ${type}`);
   }
 
+  // Collect the whole document into export-ready chain objects.
   collectChains() {
     return this.chains.map((chain) => ({
       label: chain.labelInput.value,
@@ -2352,6 +2467,7 @@ export default class DocumentApp {
     }));
   }
 
+  // Filter visible entries and sidebar items by search query.
   doSearch(query) {
     const q = String(query || "").trim().toLowerCase();
     this.chains.forEach((chain) => {
@@ -2380,6 +2496,7 @@ export default class DocumentApp {
     }
   }
 
+  // Build AEON YAML text from collected chains.
   buildAeonYaml(chains) {
     const meta = this.metaTextarea.value || this.yamlMeta;
     let output = meta ? `${meta}\n` : "";
@@ -2397,6 +2514,7 @@ export default class DocumentApp {
     return `${output}${parts.join("\n\n")}\n`;
   }
 
+  // Export the current document to the chosen format.
   exportDocument() {
     const chains = this.collectChains();
     if (!chains.length) {
