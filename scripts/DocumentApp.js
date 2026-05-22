@@ -18,16 +18,6 @@ const STORAGE_GAME_KEY = "bubble_wrap_game";
 const DOC_MODE_AEON = "aeon-yaml";
 const DOC_MODE_MSYT = "msyt-yaml";
 const DOC_MODE_BCML = "msyt-bcml";
-const TYPE_OPTIONS = [
-  ["dialogue", "NPC"],
-  ["signboard", "Sign"],
-  ["item", "Item"],
-  ["compendium", "Compendium"],
-  ["questBOTW", "Quest BotW"],
-  ["questTOTK", "Quest TotK"],
-  ["choice", "Choice"],
-  ["tip", "Tip"]
-];
 
 // Escape text for safe HTML insertion.
 function escapeHtml(value) {
@@ -336,6 +326,7 @@ function findPairedFormatResetTag(raw, startTag) {
 
 // Remove a boundary tag and its paired reset when needed.
 function removeTagAndPairedReset(raw, tag) {
+  // Deleting a format-start tag should also remove its matching reset tag.
   if (!tag) return raw;
   const out = raw.slice(0, tag.start) + raw.slice(tag.end);
   const pair = findPairedFormatResetTag(raw, tag);
@@ -1406,10 +1397,10 @@ export default class DocumentApp {
     const typeSelect = header.querySelector(".type-sel");
     const deleteBtn = header.querySelector(".chain-del");
 
-    TYPE_OPTIONS.forEach(([value, label]) => {
+    Object.keys(BubbleType).forEach((value) => {
       const option = document.createElement("option");
       option.value = value;
-      option.textContent = label;
+      option.textContent = BubbleType[value]?.label || value;
       typeSelect.appendChild(option);
     });
     typeSelect.value = bubbleType;
@@ -1486,16 +1477,6 @@ export default class DocumentApp {
   applyChainType(chain, type, initial = false) {
     const config = BubbleType[type];
     if (!config) return;
-    if (config.isSingleton && chain.bubbles.length > 1) {
-      if (!initial && !window.confirm("This bubble type allows only one bubble. Keep only the first page?")) {
-        chain.typeSelect.value = chain.section.dataset.type || "dialogue";
-        return;
-      }
-      const [first, ...rest] = chain.bubbles;
-      rest.forEach((bubble) => bubble.card.remove());
-      chain.bubbles = first ? [first] : [];
-      if (chain.bubbles[0]) chain.bubbles[0].joinKind = null;
-    }
     chain.section.dataset.type = type;
     chain.bubbles.forEach((bubble) => this.applyBubbleType(bubble, type));
     // this.setStatus(`Type: ${type}`);
@@ -1503,11 +1484,12 @@ export default class DocumentApp {
 
   // Apply one bubble type to one rendered bubble.
   applyBubbleType(bubble, type) {
+    const config = BubbleType[type];
+    if (!config) return;
     const bubbleEl = bubble.bubble;
     bubbleEl.dataset.type = type;
-    bubbleEl.className = `bubble ${type}`;
+    bubbleEl.className = `bubble ${config.className}`;
     bubble.card.dataset.type = type;
-    bubble.bubble.closest(".bubble-list")?.classList.toggle("is-singleton", BubbleType[type]?.isSingleton || false);
     this.updateBubbleOverflow(bubble, type);
   }
 
@@ -1725,8 +1707,6 @@ export default class DocumentApp {
 
   // Create and mount one bubble card inside a chain.
   addBubble(chain, raw = "", afterBubble = null, joinKind = "pageBreak") {
-    if (BubbleType[chain.typeSelect.value]?.isSingleton && chain.bubbles.length >= 1) return null;
-
     const card = document.createElement("div");
     card.className = "bubble-card bubble-outer";
 
@@ -1784,6 +1764,7 @@ export default class DocumentApp {
       const marker = event.target.closest(".tag-node, .pause-node");
       const isDirectSurface = event.target === bubble || event.target === content;
       if (marker || isDirectSurface) {
+        // Clicking a marker or empty bubble surface should still focus the real text layer.
         event.preventDefault();
         content.focus();
         const anchor = this.getVisibleOffsetFromPoint(content, event.clientX, event.clientY);
@@ -1851,6 +1832,7 @@ export default class DocumentApp {
       const tag = getBoundaryTag(raw, startOff, event.inputType === "deleteContentBackward" ? -1 : 1);
       if (!tag) return;
       if (isProtectedDeleteTag(tag)) return;
+      // Marker deletes are handled in raw so browser DOM deletion cannot desync the tag layer.
       event.preventDefault();
       content._pendingInputEdit = null;
       saveUndo(content);

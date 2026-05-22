@@ -62,6 +62,7 @@ function createTextSpan(text, state) {
 function createTagNode(rawTag, state = {}) {
   const { name } = parseTagBody(rawTag.slice(2, -2));
   const token = document.createElement("span");
+  // Raw tags are rendered as non-editable marker nodes, not as normal text.
   token.className = PAUSE_TAGS.has(name) ? "pause-node" : "tag-node";
   token.dataset.rawTag = rawTag;
   token.dataset.tagName = name;
@@ -230,6 +231,7 @@ export function renderRawToContent(contentEl, raw) {
   };
 
   const pushText = (text) => {
+    // Newlines become separate line divs so caret and overflow logic can count lines.
     const parts = text.split("\n");
     for (let i = 0; i < parts.length; i++) {
       appendTextWithState(line, parts[i], state);
