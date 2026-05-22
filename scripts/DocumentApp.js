@@ -1130,7 +1130,10 @@ export default class DocumentApp {
         this.syncMetaPanel();
         this.setStatus(`Loaded BCML texts.json with ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
         return;
-      } catch {}
+      } catch (error) {
+        window.alert(`Error: ${error.message}`);
+        return;
+      }
     }
 
     if (/^(?:---\n)?(?:\s*group_count:|\s*entries:)/m.test(trimmed)) {
@@ -1150,7 +1153,10 @@ export default class DocumentApp {
         this.syncMetaPanel();
         this.setStatus(`Loaded .msyt with ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
         return;
-      } catch {}
+      } catch (error) {
+        window.alert(`Error: ${error.message}`);
+        return;
+      }
     }
 
     const doc = parseAeonYaml(normalized);
