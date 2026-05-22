@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "start": "python -m http.server 3000 --bind 127.0.0.1",
+    "start:py": "py -3 -m http.server 3000 --bind 127.0.0.1"
+  },
   "devDependencies": {
     "eslint": "^8.23.1"
   }

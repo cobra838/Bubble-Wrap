@@ -1,0 +1,2424 @@
+﻿import BubbleType from "./enums/BubbleType.js";
+import {
+  contentToPlainText,
+  ensureEditableStructure,
+  parseRawTags,
+  rawToPlainText,
+  renderRawToContent,
+  serializeContent,
+  setRawContentGame,
+  spliceVisibleRange,
+  tagSummary,
+  visibleOffsetToRaw
+} from "./RawContent.js";
+import { buildMsytBcmlJson, buildMsytYaml, parseMsytBcmlJson, parseMsytYaml } from "./MSYTFormat.js";
+import { getColorChoices, getColorCss, getTags, setGcfText } from "./GcfRegistry.js";
+
+const STORAGE_GAME_KEY = "bubble_wrap_game";
+const DOC_MODE_AEON = "aeon-yaml";
+const DOC_MODE_MSYT = "msyt-yaml";
+const DOC_MODE_BCML = "msyt-bcml";
+const TYPE_OPTIONS = [
+  ["dialogue", "NPC"],
+  ["signboard", "Sign"],
+  ["item", "Item"],
+  ["compendium", "Compendium"],
+  ["questBOTW", "Quest BotW"],
+  ["questTOTK", "Quest TotK"],
+  ["choice", "Choice"],
+  ["tip", "Tip"]
+];
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function normalizeNewlines(text) {
+  return String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function parseInlineTag(rawTag) {
+  const body = String(rawTag || "").slice(2, -2).trim();
+  const spaceIndex = body.indexOf(" ");
+  const name = spaceIndex === -1 ? body : body.slice(0, spaceIndex);
+  const rest = spaceIndex === -1 ? "" : body.slice(spaceIndex + 1);
+  const args = {};
+  const order = [];
+  for (const match of rest.matchAll(/([A-Za-z0-9_]+)="([^"]*)"/g)) {
+    order.push(match[1]);
+    args[match[1]] = match[2];
+  }
+  return { name, args, order };
+}
+
+function buildInlineTag(name, args = {}, order = []) {
+  const keys = order.length ? order : Object.keys(args);
+  const parts = [name];
+  keys.forEach((key) => {
+    if (args[key] == null) return;
+    parts.push(`${key}="${String(args[key]).replaceAll('"', "&quot;")}"`);
+  });
+  return `{{${parts.join(" ")}}}`;
+}
+
+function tagColor(name) {
+  const map = {
+    animation: "hsl(60,75%,60%)",
+    autoAdvance: "hsl(30,75%,60%)",
+    choice2: "hsl(250,75%,60%)",
+    choice3: "hsl(270,75%,60%)",
+    choice4: "hsl(290,75%,60%)",
+    choiceByFlags: "hsl(310,75%,60%)",
+    delay8: "hsl(320,75%,60%)",
+    delay15: "hsl(340,75%,60%)",
+    delay30: "hsl(355,75%,60%)",
+    font: "hsl(120,75%,60%)",
+    icon: "hsl(210,75%,60%)",
+    playSound: "hsl(230,75%,60%)",
+    setEmotion: "hsl(0,75%,60%)",
+    setEmotion2: "hsl(20,75%,60%)",
+    setVoice: "hsl(40,75%,60%)",
+    singleChoice: "hsl(330,75%,60%)",
+    textSpeed: "hsl(50,75%,60%)"
+  };
+  if (map[name]) return map[name];
+  let hash = 5381;
+  for (let i = 0; i < name.length; i++) hash = ((hash << 5) + hash + name.charCodeAt(i)) >>> 0;
+  return `hsl(${hash % 360},70%,58%)`;
+}
+
+function inferMsytBubbleTypeFromPath(path) {
+  const value = String(path || "").replaceAll("\\", "/");
+  if (/(^|\/)ActorType\//.test(value)) return "item";
+  if (/(^|\/)QuestMsg\//.test(value)) return "questBOTW";
+  if (/(^|\/)Tips\//.test(value)) return "tip";
+  return "dialogue";
+}
+
+function isChoiceLabel(label) {
+  return /^\d+$/.test(String(label || "").trim());
+}
+
+function defaultEntry(mode = DOC_MODE_AEON, msytDocInfo = {}) {
+  const isMsyt = mode === DOC_MODE_BCML || mode === DOC_MODE_MSYT;
+  const defaultPath = msytDocInfo.defaultPath || "NewFile.msyt";
+  return {
+    label: "",
+    attrKey: isMsyt ? "attributes" : "attributeText",
+    attrVal: "",
+    content: "",
+    bubbleType: isMsyt ? inferMsytBubbleTypeFromPath(defaultPath) : "dialogue",
+    msytLocale: msytDocInfo.defaultLocale || "EUen",
+    msytPath: defaultPath,
+    msytHasAttributes: isMsyt
+  };
+}
+
+function splitPages(raw) {
+  const value = String(raw || "");
+  return value ? value.split("{{pageBreak}}") : [""];
+}
+
+function parseAeonYaml(text) {
+  const normalized = normalizeNewlines(text);
+  const mm = normalized.match(/^%%%\n[\s\S]*?%%%\n/);
+  const yamlMeta = mm ? mm[0] : "";
+  const rest = mm ? normalized.slice(mm[0].length) : normalized;
+  const entries = [];
+  for (const match of rest.matchAll(/---\nlabel: (.*?)\n(?:(attributeText|attribute): (.*?)\n)?---\n([\s\S]*?)(?=\n---\n|$)/g)) {
+    let content = match[4];
+    if (content.endsWith("\n")) content = content.slice(0, -1);
+    entries.push({
+      label: match[1].trim(),
+      attrKey: match[2] || "attributeText",
+      attrVal: match[3] != null ? match[3].trim() : "",
+      content,
+      bubbleType: "dialogue"
+    });
+  }
+  return { entries, yamlMeta };
+}
+
+function makeStatus(text) {
+  return text || "Ready";
+}
+
+function stringifyMsytMeta(meta) {
+  if (!meta || typeof meta !== "object") return "";
+  return `${JSON.stringify(meta, null, 2)}\n`;
+}
+
+function hasATR1(currentGame, yamlMeta) {
+  if (currentGame === "TotK") return false;
+  return !/hasATR1:\s*false/.test(String(yamlMeta || ""));
+}
+
+function getTextLengthExcludingTagNodes(range) {
+  const fragment = range.cloneContents();
+  fragment.querySelectorAll?.("[data-raw-tag]").forEach((node) => node.remove());
+  return fragment.textContent.length;
+}
+
+function getVisibleTextLength(node) {
+  if (!node) return 0;
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent.length;
+  if (node.nodeType !== Node.ELEMENT_NODE) return 0;
+  if (node.classList?.contains("line-tail-marker")) return 0;
+  if (node.dataset?.rawTag !== undefined) return 0;
+  if (node.tagName === "BR") return 1;
+  let total = 0;
+  for (const child of node.childNodes) total += getVisibleTextLength(child);
+  return total;
+}
+
+function getVisibleOffsetWithinNode(node, targetNode, targetOffset) {
+  let total = 0;
+  let found = false;
+
+  const walk = (current) => {
+    if (found || !current) return;
+    if (current === targetNode) {
+      if (current.nodeType === Node.TEXT_NODE) {
+        total += Math.min(targetOffset, current.textContent.length);
+      } else if (current.nodeType === Node.ELEMENT_NODE) {
+        if (current.classList?.contains("line-tail-marker")) {
+          return;
+        }
+        if (current.dataset?.rawTag !== undefined) {
+          return;
+        }
+        if (current.tagName === "BR") {
+          total += Math.min(targetOffset, 1);
+        } else {
+          for (let i = 0; i < Math.min(targetOffset, current.childNodes.length); i++) {
+            total += getVisibleTextLength(current.childNodes[i]);
+          }
+        }
+      }
+      found = true;
+      return;
+    }
+
+    if (current.nodeType === Node.TEXT_NODE) {
+      total += current.textContent.length;
+      return;
+    }
+    if (current.nodeType !== Node.ELEMENT_NODE) return;
+    if (current.classList?.contains("line-tail-marker")) return;
+    if (current.dataset?.rawTag !== undefined) return;
+    if (current.tagName === "BR") {
+      total += 1;
+      return;
+    }
+
+    for (const child of current.childNodes) {
+      walk(child);
+      if (found) return;
+    }
+  };
+
+  walk(node);
+  return found ? total : null;
+}
+
+function getSelectionTextOffsets(content, range) {
+  const offsetFromPoint = (targetNode, targetOffset) => {
+    if (targetNode === content) {
+      let total = 0;
+      let sawBlock = false;
+      for (let i = 0; i < Math.min(targetOffset, content.childNodes.length); i++) {
+        const child = content.childNodes[i];
+        const isBlock = child.nodeType === Node.ELEMENT_NODE && (child.tagName === "DIV" || child.tagName === "P");
+        if (isBlock) {
+          if (sawBlock) total += 1;
+          total += getVisibleTextLength(child);
+          sawBlock = true;
+        } else {
+          total += getVisibleTextLength(child);
+        }
+      }
+      return total;
+    }
+
+    let total = 0;
+    let sawBlock = false;
+    for (const child of content.childNodes) {
+      const isBlock = child.nodeType === Node.ELEMENT_NODE && (child.tagName === "DIV" || child.tagName === "P");
+      const local = getVisibleOffsetWithinNode(child, targetNode, targetOffset);
+      if (local != null) {
+        if (isBlock && sawBlock) total += 1;
+        return total + local;
+      }
+      if (isBlock) {
+        if (sawBlock) total += 1;
+        total += getVisibleTextLength(child);
+        sawBlock = true;
+      } else {
+        total += getVisibleTextLength(child);
+      }
+    }
+    return total;
+  };
+
+  const startOff = offsetFromPoint(range.startContainer, range.startOffset);
+  const endOff = offsetFromPoint(range.endContainer, range.endOffset);
+  return { startOff, endOff };
+}
+
+function getBoundaryTag(raw, offset, dir) {
+  const rawBefore = visibleOffsetToRaw(raw, offset, "before");
+  const rawAfter = visibleOffsetToRaw(raw, offset, "after");
+  if (rawBefore === rawAfter) return null;
+  const tags = parseRawTags(raw).filter((tag) => tag.start >= rawBefore && tag.end <= rawAfter);
+  if (!tags.length) return null;
+  return dir < 0 ? tags[tags.length - 1] : tags[0];
+}
+
+function isProtectedDeleteTag(tag) {
+  if (!tag) return false;
+  if (tag.name === "color") return tag.args.id === "Reset" || tag.args.id === "-1";
+  if (tag.name === "size") return tag.args.value === "100";
+  return false;
+}
+
+function isFormatStartTag(tag) {
+  return !!tag && (tag.name === "color" || tag.name === "size") && !isProtectedDeleteTag(tag);
+}
+
+function findPairedFormatResetTag(raw, startTag) {
+  if (!isFormatStartTag(startTag)) return null;
+  const tags = parseRawTags(raw);
+  let depth = 0;
+  let seenStart = false;
+  for (const tag of tags) {
+    if (tag.start === startTag.start && tag.end === startTag.end) {
+      seenStart = true;
+      depth = 1;
+      continue;
+    }
+    if (!seenStart || tag.name !== startTag.name) continue;
+    if (isFormatStartTag(tag)) {
+      depth++;
+      continue;
+    }
+    if (isProtectedDeleteTag(tag)) {
+      depth--;
+      if (depth === 0) return tag;
+    }
+  }
+  return null;
+}
+
+function removeTagAndPairedReset(raw, tag) {
+  if (!tag) return raw;
+  const out = raw.slice(0, tag.start) + raw.slice(tag.end);
+  const pair = findPairedFormatResetTag(raw, tag);
+  if (!pair) return out;
+  const shift = tag.end - tag.start;
+  const adjStart = pair.start > tag.start ? pair.start - shift : pair.start;
+  const adjEnd = pair.end > tag.start ? pair.end - shift : pair.end;
+  return out.slice(0, adjStart) + out.slice(adjEnd);
+}
+
+const FORMAT_DEFS = {
+  color: {
+    tagName: "color",
+    extract: (inner) => {
+      const match = inner.match(/id="([^"]*)"/);
+      return match ? match[1] : "Reset";
+    },
+    isReset: (value) => value === "Reset" || value === "-1",
+    emitTag: (value) => (value == null ? '{{color id="Reset"}}' : `{{color id="${value}"}}`)
+  },
+  size: {
+    tagName: "size",
+    extract: (inner) => {
+      const match = inner.match(/value="([^"]*)"/);
+      return match ? match[1] : "100";
+    },
+    isReset: (value) => value === "100",
+    emitTag: (value) => (value == null ? '{{size value="100"}}' : `{{size value="${value}"}}`)
+  }
+};
+
+function getFormatRuns(raw, type) {
+  const def = FORMAT_DEFS[type];
+  const runs = [];
+  let curFmt = null;
+  let runStart = null;
+  let last = 0;
+  let textPos = 0;
+  for (const match of String(raw || "").matchAll(/\{\{([^}]*)\}\}/g)) {
+    const before = raw.slice(last, match.index);
+    if (before.length) {
+      if (curFmt !== null && runStart === null) runStart = textPos;
+      textPos += before.length;
+    }
+    last = match.index + match[0].length;
+    const inner = match[1].trim();
+    const name = inner.split(" ")[0];
+    if (name !== def.tagName) continue;
+    const rawValue = def.extract(inner);
+    const nextFmt = def.isReset(rawValue) ? null : rawValue;
+    if (curFmt !== nextFmt) {
+      if (curFmt !== null && runStart !== null && textPos > runStart) {
+        runs.push({ start: runStart, end: textPos, value: curFmt });
+      }
+      curFmt = nextFmt;
+      runStart = nextFmt !== null ? textPos : null;
+    }
+  }
+  const remaining = raw.slice(last);
+  if (remaining.length) {
+    if (curFmt !== null && runStart === null) runStart = textPos;
+    textPos += remaining.length;
+  }
+  if (curFmt !== null && runStart !== null && textPos > runStart) {
+    runs.push({ start: runStart, end: textPos, value: curFmt });
+  }
+  return runs;
+}
+
+function stripEmptyFormatPairs(raw) {
+  let next = String(raw || "");
+  let prev = "";
+  while (next !== prev) {
+    prev = next;
+    next = next
+      .replace(/\{\{color\b[^}]*\}\}\{\{color id="Reset"\}\}/g, "")
+      .replace(/\{\{size\b[^}]*\}\}\{\{size value="100"\}\}/g, "");
+  }
+  return next;
+}
+
+function applyFormatToRange(raw, startOff, endOff, type, value) {
+  if (startOff < 0 || endOff < 0 || startOff >= endOff) return raw;
+  const def = FORMAT_DEFS[type];
+  const atoms = [];
+  let curFmt = null;
+  let last = 0;
+  let textPos = 0;
+  for (const match of String(raw || "").matchAll(/\{\{([^}]*)\}\}/g)) {
+    const before = raw.slice(last, match.index);
+    last = match.index + match[0].length;
+    if (before) {
+      atoms.push({ type: "text", value: before, fmt: curFmt, pos: textPos });
+      textPos += before.length;
+    }
+    const inner = match[1].trim();
+    const name = inner.split(" ")[0];
+    if (name === def.tagName) {
+      const v = def.extract(inner);
+      curFmt = def.isReset(v) ? null : v;
+    } else {
+      atoms.push({ type: "tag", value: match[0] });
+    }
+  }
+  const remaining = raw.slice(last);
+  if (remaining) atoms.push({ type: "text", value: remaining, fmt: curFmt, pos: textPos });
+
+  const newAtoms = [];
+  for (const atom of atoms) {
+    if (atom.type === "tag") {
+      newAtoms.push(atom);
+      continue;
+    }
+    const len = atom.value.length;
+    const s = startOff - atom.pos;
+    const e = endOff - atom.pos;
+    if (e <= 0 || s >= len) {
+      newAtoms.push({ type: "text", value: atom.value, fmt: atom.fmt });
+      continue;
+    }
+    if (s > 0) newAtoms.push({ type: "text", value: atom.value.slice(0, s), fmt: atom.fmt });
+    const selStart = Math.max(s, 0);
+    const selEnd = Math.min(e, len);
+    newAtoms.push({ type: "text", value: atom.value.slice(selStart, selEnd), fmt: value });
+    if (e < len) newAtoms.push({ type: "text", value: atom.value.slice(e), fmt: atom.fmt });
+  }
+
+  let out = "";
+  let emitFmt = null;
+  for (const atom of newAtoms) {
+    if (atom.type === "tag") {
+      out += atom.value;
+      continue;
+    }
+    if (!atom.value) continue;
+    if (atom.fmt !== emitFmt) {
+      out += def.emitTag(atom.fmt);
+      emitFmt = atom.fmt;
+    }
+    out += atom.value;
+  }
+  if (emitFmt !== null) out += def.emitTag(null);
+  return out;
+}
+
+function normalizeLeadingFormatDeletion(oldRaw, nextRaw, edit, startOff, oldEndOff, newEndOff) {
+  if (edit && ["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(edit.inputType)) {
+    for (const type of ["color", "size"]) {
+      const run = getFormatRuns(oldRaw, type).find((item) => item.start === edit.start && item.end > edit.start);
+      if (!run) continue;
+      const removed = Math.max(0, Math.min(edit.end, run.end) - edit.start);
+      if (removed <= 0) continue;
+      const nextRunEnd = edit.start + Math.max(0, run.end - edit.end);
+      if (nextRunEnd > edit.start) nextRaw = applyFormatToRange(nextRaw, edit.start, nextRunEnd, type, null);
+    }
+    return stripEmptyFormatPairs(nextRaw);
+  }
+  if (newEndOff !== startOff) return stripEmptyFormatPairs(nextRaw);
+  for (const type of ["color", "size"]) {
+    const run = getFormatRuns(oldRaw, type).find((item) => item.start === startOff && item.end > startOff);
+    if (!run) continue;
+    const nextRunEnd = startOff + Math.max(0, run.end - oldEndOff);
+    if (nextRunEnd > startOff) nextRaw = applyFormatToRange(nextRaw, startOff, nextRunEnd, type, null);
+  }
+  return stripEmptyFormatPairs(nextRaw);
+}
+
+function capturePendingInputEdit(content, inputType) {
+  const selection = getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    content._pendingInputEdit = null;
+    return;
+  }
+  const range = selection.getRangeAt(0);
+  if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) {
+    content._pendingInputEdit = null;
+    return;
+  }
+  const { startOff, endOff } = getSelectionTextOffsets(content, range);
+  let start = startOff;
+  let end = endOff;
+  const plain = rawToPlainText(content.dataset.raw ?? "");
+  if (startOff === endOff) {
+    if (inputType === "deleteContentBackward" && startOff > 0) {
+      start = startOff - 1;
+      end = startOff;
+    } else if (inputType === "deleteContentForward") {
+      start = startOff;
+      end = Math.min(startOff + 1, plain.length);
+    }
+  }
+  content._pendingInputEdit = { inputType, start, end };
+}
+
+const _undoStacks = new WeakMap();
+const _redoStacks = new WeakMap();
+
+function getUndoStack(content) {
+  if (!_undoStacks.has(content)) _undoStacks.set(content, []);
+  return _undoStacks.get(content);
+}
+
+function getRedoStack(content) {
+  if (!_redoStacks.has(content)) _redoStacks.set(content, []);
+  return _redoStacks.get(content);
+}
+
+function saveUndo(content) {
+  if (!content?.classList?.contains("bubble-content")) return;
+  const raw = content.dataset.raw ?? serializeContent(content);
+  const stack = getUndoStack(content);
+  if (stack[stack.length - 1] === raw) return;
+  stack.push(raw);
+  getRedoStack(content).length = 0;
+}
+
+export default class DocumentApp {
+  constructor() {
+    this.currentGame = "BotW";
+    this.currentDocMode = DOC_MODE_AEON;
+    this.exportMode = DOC_MODE_AEON;
+    this.yamlMeta = "";
+    this.msytDocInfo = {
+      defaultLocale: "EUen",
+      defaultPath: "NewFile.msyt",
+      msytMeta: null
+    };
+    this.chains = [];
+    this.rawTarget = null;
+    this.editTarget = null;
+    this.ctxTarget = null;
+    this.ctxSelection = null;
+    this.tagSelection = null;
+    this.surfaceDragSelection = null;
+    this.activeContent = null;
+    this.autoSplit = localStorage.getItem("msbt_autosplit") !== "0";
+
+    this.sidebar = document.getElementById("sidebar");
+    this.editorArea = document.getElementById("editor-area");
+    this.chainList = document.getElementById("chain-list");
+    this.emptyState = document.getElementById("empty-state");
+    this.searchInput = document.getElementById("search-box");
+    this.fileDrop = document.getElementById("file-drop");
+    this.fileInput = document.getElementById("file-input");
+    this.metaPanel = document.getElementById("meta-panel");
+    this.metaTextarea = document.getElementById("meta-ta");
+    this.statusbar = document.getElementById("statusbar");
+    this.rawModal = document.getElementById("raw-modal");
+    this.rawTextarea = document.getElementById("raw-text");
+    this.tagPicker = document.getElementById("tag-picker");
+    this.tpSearch = document.getElementById("tp-search");
+    this.tpList = document.getElementById("tp-list");
+    this.teModal = document.getElementById("te-modal");
+    this.teTitle = document.getElementById("te-title");
+    this.teFields = document.getElementById("te-fields");
+    this.ctxMenu = document.getElementById("ctx-menu");
+    this.btnBotw = document.getElementById("btn-botw");
+    this.btnTotk = document.getElementById("btn-totk");
+    this.exportWrap = document.getElementById("export-mode-wrap");
+    this.btnExpYaml = document.getElementById("btn-exp-yaml");
+    this.btnExpMsyt = document.getElementById("btn-exp-msyt");
+    this.btnExpBcml = document.getElementById("btn-exp-bcml");
+    this.exportBtn = document.getElementById("btn-export");
+    this.metaBtn = document.getElementById("btn-meta");
+    this.btnTag = document.getElementById("btn-tag");
+    this.btnAutosplit = document.getElementById("btn-autosplit");
+    this.globalTypeSelect = document.getElementById("global-type-select");
+    this.emptyAddBtn = document.getElementById("empty-add-btn");
+
+    setRawContentGame(this.currentGame);
+    this.bindEvents();
+    this.exposeGlobals();
+    this.restoreGame();
+    this.loadGcfColorMaps();
+    this.renderDoc([]);
+    this.syncDocModeUi();
+    this.syncMetaPanel();
+    this.syncAutoSplitUi();
+    this.setStatus("Ready");
+  }
+
+  bindEvents() {
+    this.fileInput.addEventListener("change", (event) => this.handleFileInput(event));
+    this.metaTextarea.addEventListener("input", () => {
+      if (this.currentDocMode === DOC_MODE_AEON) this.yamlMeta = this.metaTextarea.value;
+    });
+
+    document.body.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      this.fileDrop.classList.add("drag");
+    });
+    document.body.addEventListener("dragleave", () => {
+      this.fileDrop.classList.remove("drag");
+    });
+    document.body.addEventListener("drop", (event) => {
+      event.preventDefault();
+      this.fileDrop.classList.remove("drag");
+      const file = event.dataTransfer.files?.[0];
+      if (file) this.loadFile(file);
+    });
+
+    document.getElementById("raw-apply").addEventListener("click", () => this.applyRaw());
+    document.getElementById("raw-close").addEventListener("click", () => this.closeRaw());
+    document.getElementById("ctx-view-raw").addEventListener("click", () => this.openRawFromContext());
+    document.getElementById("ctx-delay8").addEventListener("click", () => this.ctxInsertDelay("delay8"));
+    document.getElementById("ctx-delay15").addEventListener("click", () => this.ctxInsertDelay("delay15"));
+    document.getElementById("ctx-delay30").addEventListener("click", () => this.ctxInsertDelay("delay30"));
+    document.getElementById("ctx-copy-tags").addEventListener("click", () => this.copyContextRaw());
+    document.getElementById("ctx-copy-plain").addEventListener("click", () => this.copyContextPlain());
+    this.btnTag.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      this.captureTagSelection(this.activeContent, true);
+    });
+
+    document.addEventListener("contextmenu", (event) => this.handleContextMenu(event));
+    document.addEventListener("mousedown", (event) => {
+      if (!event.target.closest("#ctx-menu")) this.closeCtx();
+    });
+    document.addEventListener("selectionchange", () => {
+      if (!this.activeContent) return;
+      this.captureTagSelection(this.activeContent, false);
+      const bubbleRecord = this.findBubbleByContent(this.activeContent);
+      if (bubbleRecord?.fmtPopup) this.checkFmtSel(this.activeContent, bubbleRecord.fmtPopup);
+    });
+    document.addEventListener("mousemove", (event) => {
+      if (!this.surfaceDragSelection || !(event.buttons & 1)) return;
+      const { content, anchor } = this.surfaceDragSelection;
+      if (!content?.isConnected) {
+        this.surfaceDragSelection = null;
+        return;
+      }
+      content.focus();
+      const current = this.getVisibleOffsetFromPoint(content, event.clientX, event.clientY);
+      this.setSelectionVisibleOffsets(content, anchor, current);
+      this.captureTagSelection(content, true);
+      const bubbleRecord = this.findBubbleByContent(content);
+      if (bubbleRecord?.fmtPopup) this.checkFmtSel(content, bubbleRecord.fmtPopup);
+    });
+    document.addEventListener("mouseup", () => {
+      if (!this.surfaceDragSelection) return;
+      const content = this.surfaceDragSelection.content;
+      this.surfaceDragSelection = null;
+      if (!content?.isConnected) return;
+      this.captureTagSelection(content, true);
+      const bubbleRecord = this.findBubbleByContent(content);
+      if (bubbleRecord?.fmtPopup) this.checkFmtSel(content, bubbleRecord.fmtPopup);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        this.surfaceDragSelection = null;
+        this.closeTP();
+        this.closeRaw();
+        this.closeTE();
+        this.closeCtx();
+      }
+    });
+  }
+
+  exposeGlobals() {
+    window.selectGame = (game) => this.selectGame(game);
+    window.setExportMode = (mode) => this.setExportMode(mode);
+    window.exportYaml = () => this.exportDocument();
+    window.toggleMeta = () => this.metaPanel.classList.toggle("open");
+    window.openTP = () => this.openTP();
+    window.closeTP = () => this.closeTP();
+    window.filterTP = (query) => this.filterTP(query);
+    window.tpKey = (event) => this.tpKey(event);
+    window.toggleAutoSplit = () => this.toggleAutoSplit();
+    window.applyGlobalType = (type) => this.applyGlobalType(type);
+    window.doSearch = (query) => this.doSearch(query);
+    window.openNC = () => this.createChain(this.makeNewEntry());
+    window.closeRaw = () => this.closeRaw();
+    window.applyRaw = () => this.applyRaw();
+    window.closeTE = () => this.closeTE();
+    window.saveTE = () => this.saveTE();
+    window.deleteTE = () => this.deleteTE();
+  }
+
+  restoreGame() {
+    const saved = localStorage.getItem(STORAGE_GAME_KEY);
+    if (saved === "TotK") this.currentGame = "TotK";
+    this.syncGameUi();
+  }
+
+  syncGameUi() {
+    setRawContentGame(this.currentGame);
+    this.btnBotw.classList.toggle("active", this.currentGame === "BotW");
+    this.btnTotk.classList.toggle("active", this.currentGame === "TotK");
+    this.chains.forEach((chain) => chain.bubbles.forEach((bubble) => bubble.fmtPopup && this.buildFmtPopup(bubble.fmtPopup)));
+  }
+
+  syncDocModeUi() {
+    const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
+    const onlyBcml = this.currentDocMode === DOC_MODE_BCML;
+    this.metaBtn.disabled = isMsyt;
+    if (isMsyt) this.metaPanel.classList.remove("open");
+    this.exportWrap.classList.toggle("show", this.currentGame === "BotW");
+    this.btnExpYaml.style.display = onlyBcml ? "none" : "";
+    this.btnExpMsyt.style.display = onlyBcml ? "none" : "";
+    this.btnExpBcml.style.display = onlyBcml ? "" : "none";
+    if (onlyBcml) this.exportMode = DOC_MODE_BCML;
+    else if (this.exportMode === DOC_MODE_BCML) this.exportMode = this.currentDocMode === DOC_MODE_MSYT ? DOC_MODE_MSYT : DOC_MODE_AEON;
+    this.btnExpYaml.classList.toggle("active", this.exportMode === DOC_MODE_AEON);
+    this.btnExpMsyt.classList.toggle("active", this.exportMode === DOC_MODE_MSYT);
+    this.btnExpBcml.classList.toggle("active", this.exportMode === DOC_MODE_BCML);
+    this.btnTag.disabled = this.currentDocMode !== DOC_MODE_AEON;
+    this.btnTag.classList.toggle("disabled", this.currentDocMode !== DOC_MODE_AEON);
+    this.fileDrop.textContent = "📂 Open YAML / .msyt / texts.json";
+    this.chains.forEach((chain) => this.updateChainModeUi(chain));
+  }
+
+  syncMetaPanel() {
+    if (this.currentDocMode === DOC_MODE_AEON) {
+      this.metaTextarea.readOnly = false;
+      this.metaTextarea.placeholder = "YAML metadata (%%% block)...";
+      this.metaTextarea.value = this.yamlMeta || "";
+      return;
+    }
+    this.metaTextarea.readOnly = true;
+    if (this.currentDocMode === DOC_MODE_MSYT) {
+      this.metaTextarea.placeholder = "MSYT mode does not use a YAML meta block";
+      this.metaTextarea.value = stringifyMsytMeta(this.msytDocInfo.msytMeta);
+      return;
+    }
+    this.metaTextarea.placeholder = "MSYT mode does not use a YAML meta block";
+    this.metaTextarea.value = `defaultLocale: ${this.msytDocInfo.defaultLocale || "EUen"}\ndefaultPath: ${
+      this.msytDocInfo.defaultPath || "NewFile.msyt"
+    }\n`;
+  }
+
+  selectGame(game) {
+    if ((this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML) && game !== "BotW") {
+      this.setStatus("⚠ MSYT is supported only for BotW");
+      game = "BotW";
+    }
+    this.currentGame = game;
+    localStorage.setItem(STORAGE_GAME_KEY, game);
+    this.syncGameUi();
+    this.syncDocModeUi();
+    // this.setStatus(`Game: ${game}`);
+  }
+
+  setExportMode(mode) {
+    this.exportMode = mode;
+    this.syncDocModeUi();
+    // this.setStatus(`Export mode: ${mode}`);
+  }
+
+  getEffectiveExportMode() {
+    return this.currentGame === "BotW" ? this.exportMode : DOC_MODE_AEON;
+  }
+
+  syncAutoSplitUi() {
+    this.btnAutosplit.textContent = `✂ Auto-split: ${this.autoSplit ? "ON" : "OFF"}`;
+  }
+
+  buildFmtPopup(popup) {
+    popup.innerHTML = "";
+    const palette = getColorCss(this.currentGame);
+    getColorChoices(this.currentGame).forEach((name) => {
+      if (name === "Reset") return;
+      const value = palette[name];
+      if (!value) return;
+      const button = document.createElement("button");
+      button.className = "fmt-btn";
+      button.type = "button";
+      button.innerHTML = `<span class="fmt-dot" style="color:${value}"></span>`;
+      button.title = name;
+      button.onmousedown = (event) => {
+        event.preventDefault();
+        this.applyFormat("color", name);
+      };
+      popup.appendChild(button);
+    });
+
+    const reset = document.createElement("button");
+    reset.className = "fmt-btn";
+    reset.type = "button";
+    reset.innerHTML = '<span class="fmt-reset">✕</span>';
+    reset.title = "Reset color";
+    reset.onmousedown = (event) => {
+      event.preventDefault();
+      this.applyFormat("color", null);
+    };
+    popup.appendChild(reset);
+
+    const sep = document.createElement("div");
+    sep.className = "fmt-sep";
+    popup.appendChild(sep);
+
+    for (const [size, label] of [
+      ["80", "S"],
+      ["100", "M"],
+      ["125", "L"]
+    ]) {
+      const button = document.createElement("button");
+      button.className = "fmt-btn";
+      button.type = "button";
+      const fontSize = size === "80" ? "9px" : size === "100" ? "11px" : "14px";
+      button.innerHTML = `<span class="fmt-sz" style="font-size:${fontSize}">${label}</span>`;
+      button.title = `Size ${size}%`;
+      button.onmousedown = (event) => {
+        event.preventDefault();
+        this.applyFormat("size", size === "100" ? null : size);
+      };
+      popup.appendChild(button);
+    }
+  }
+
+  captureTagSelection(content = this.activeContent, fallbackToEnd = false) {
+    if (!content) return null;
+    const selection = getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      if (content.contains(range.startContainer) && content.contains(range.endContainer)) {
+        const { startOff, endOff } = getSelectionTextOffsets(content, range);
+        this.tagSelection = { content, start: startOff, end: endOff };
+        return this.tagSelection;
+      }
+    }
+    if (!fallbackToEnd) return this.tagSelection;
+    const raw = content.dataset.raw ?? serializeContent(content);
+    const end = rawToPlainText(raw).length;
+    this.tagSelection = { content, start: end, end };
+    return this.tagSelection;
+  }
+
+  openTP() {
+    if (this.currentDocMode !== DOC_MODE_AEON) {
+      this.setStatus("GCF Tag picker is for AEON YAML");
+      return;
+    }
+    const content = this.activeContent || document.activeElement?.closest?.(".bubble-content");
+    if (content) this.captureTagSelection(content, false);
+    this.tpList.innerHTML = "";
+    for (const tagDef of getTags(this.currentGame)) {
+      if (tagDef.name === "color" || tagDef.name === "size" || tagDef.name === "pageBreak") continue;
+      const item = document.createElement("div");
+      item.className = "tp-item";
+      item.dataset.n = String(tagDef.name || "").toLowerCase();
+      item.innerHTML = `<span class="tp-name">${escapeHtml(tagDef.name)}</span><span class="tp-desc">${escapeHtml(
+        tagDef.description || ""
+      )}</span>`;
+      item.addEventListener("click", () => this.insertFromTP(tagDef));
+      this.tpList.appendChild(item);
+    }
+    if (!this.tpList.childElementCount) {
+      this.setStatus("No GCF tags loaded");
+      return;
+    }
+    this.tagPicker.classList.add("open");
+    this.tpSearch.value = "";
+    setTimeout(() => {
+      this.tpSearch.focus();
+      this.tpSetHi(0);
+    }, 40);
+  }
+
+  closeTP() {
+    this.tagPicker.classList.remove("open");
+  }
+
+  filterTP(query) {
+    const q = String(query || "").toLowerCase();
+    this.tpList.querySelectorAll(".tp-item").forEach((item) => {
+      item.style.display = item.dataset.n.includes(q) ? "" : "none";
+    });
+    this.tpSetHi(0);
+  }
+
+  tpVisible() {
+    return [...this.tpList.querySelectorAll(".tp-item")].filter((item) => item.style.display !== "none");
+  }
+
+  tpSetHi(index) {
+    const items = this.tpVisible();
+    items.forEach((item) => item.classList.remove("tp-hi"));
+    if (items[index]) {
+      items[index].classList.add("tp-hi");
+      items[index].scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  tpHiIdx() {
+    return this.tpVisible().findIndex((item) => item.classList.contains("tp-hi"));
+  }
+
+  tpKey(event) {
+    const items = this.tpVisible();
+    if (!items.length) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      this.tpSetHi(Math.min(this.tpHiIdx() + 1, items.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      this.tpSetHi(Math.max(this.tpHiIdx() - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const active = items[this.tpHiIdx()];
+      if (active) active.click();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      this.closeTP();
+    }
+  }
+
+  insertFromTP(tagDef) {
+    this.closeTP();
+    const saved = this.tagSelection;
+    const content = saved?.content || this.activeContent;
+    if (!content) {
+      this.setStatus("⚠ Put caret in a bubble");
+      return;
+    }
+    const bubbleRecord = this.findBubbleByContent(content);
+    if (!bubbleRecord) {
+      this.setStatus("⚠ Put caret in a bubble");
+      return;
+    }
+    saveUndo(content);
+    const args = {};
+    const order = [];
+    for (const arg of tagDef.args || []) {
+      order.push(arg.name);
+      const mappedValues = Object.values(arg.valueMap || {});
+      args[arg.name] = arg.default != null ? String(arg.default) : mappedValues[0] ?? "";
+    }
+    const rawTag = buildInlineTag(tagDef.name, args, order);
+    const currentRaw = content.dataset.raw ?? serializeContent(content);
+    const start = saved && saved.content === content ? saved.start : rawToPlainText(currentRaw).length;
+    const end = saved && saved.content === content ? saved.end : start;
+    const nextRaw = spliceVisibleRange(currentRaw, start, end, rawTag);
+    renderRawToContent(content, nextRaw);
+    content.dataset.raw = nextRaw;
+    content._nextInputCollapsedBias = "after";
+    content.focus();
+    this.setCaretAtVisibleOffset(content, start);
+    this.tagSelection = { content, start, end: start };
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(bubbleRecord.chain);
+    this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+    this.setStatus(`✓ Inserted: {{${tagDef.name}}}`);
+  }
+
+  checkFmtSel(content, popup) {
+    const selection = getSelection();
+    if (
+      selection &&
+      selection.rangeCount > 0 &&
+      !selection.isCollapsed &&
+      document.activeElement === content &&
+      content.contains(selection.anchorNode) &&
+      content.contains(selection.focusNode)
+    ) {
+      popup.classList.add("show");
+    } else {
+      popup.classList.remove("show");
+    }
+  }
+
+  syncEntryUi() {
+    const hasEntries = this.chains.length > 0;
+    this.emptyState.hidden = hasEntries;
+    this.editorArea.classList.toggle("has-entries", hasEntries);
+    if (hasEntries) this.appendAddChainButton();
+    else this.editorArea.querySelector("#add-chain-btn")?.remove();
+  }
+
+  toggleAutoSplit() {
+    this.autoSplit = !this.autoSplit;
+    localStorage.setItem("msbt_autosplit", this.autoSplit ? "1" : "0");
+    this.syncAutoSplitUi();
+  }
+
+  setStatus(text) {
+    this.statusbar.textContent = makeStatus(text);
+  }
+
+  makeNewEntry() {
+    return defaultEntry(this.currentDocMode, this.msytDocInfo);
+  }
+
+  handleFileInput(event) {
+    const file = event.target.files?.[0];
+    if (file) this.loadFile(file);
+  }
+
+  async loadGcfColorMaps() {
+    for (const game of ["BotW", "TotK"]) {
+      try {
+        const response = await fetch(`data/gcf/${game}.gcf`);
+        if (!response.ok) continue;
+        const text = await response.text();
+        setGcfText(game, text);
+      } catch {}
+    }
+    this.syncGameUi();
+  }
+
+  async loadFile(file) {
+    const text = await file.text();
+    this.fileDrop.textContent = `📂 ${file.name}`;
+    this.loadText(text);
+  }
+
+  loadText(text) {
+    const normalized = normalizeNewlines(text);
+    const trimmed = normalized.trimStart();
+    if (!trimmed) {
+      this.currentDocMode = DOC_MODE_AEON;
+      this.exportMode = DOC_MODE_AEON;
+      this.yamlMeta = "";
+      this.msytDocInfo = {
+        defaultLocale: "EUen",
+        defaultPath: "NewFile.msyt",
+        msytMeta: null
+      };
+      this.renderDoc([]);
+      this.syncDocModeUi();
+      this.syncMetaPanel();
+      this.setStatus("Loaded empty document");
+      return;
+    }
+
+    if (trimmed.startsWith("{")) {
+      try {
+        const doc = parseMsytBcmlJson(normalized);
+        this.currentDocMode = DOC_MODE_BCML;
+        this.exportMode = DOC_MODE_BCML;
+        this.yamlMeta = "";
+        this.msytDocInfo = {
+          defaultLocale: doc.defaultLocale || "EUen",
+          defaultPath: doc.defaultPath || "NewFile.msyt",
+          msytMeta: null
+        };
+        this.selectGame("BotW");
+        this.renderDoc(doc.entries);
+        this.syncDocModeUi();
+        this.syncMetaPanel();
+        this.setStatus(`Loaded BCML texts.json with ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
+        return;
+      } catch {}
+    }
+
+    if (/^(?:---\n)?(?:\s*group_count:|\s*entries:)/m.test(trimmed)) {
+      try {
+        const doc = parseMsytYaml(normalized);
+        this.currentDocMode = DOC_MODE_MSYT;
+        this.exportMode = DOC_MODE_MSYT;
+        this.yamlMeta = "";
+        this.msytDocInfo = {
+          defaultLocale: "EUen",
+          defaultPath: "NewFile.msyt",
+          msytMeta: doc.meta
+        };
+        this.selectGame("BotW");
+        this.renderDoc(doc.entries);
+        this.syncDocModeUi();
+        this.syncMetaPanel();
+        this.setStatus(`Loaded .msyt with ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
+        return;
+      } catch {}
+    }
+
+    const doc = parseAeonYaml(normalized);
+    this.currentDocMode = DOC_MODE_AEON;
+    this.exportMode = DOC_MODE_AEON;
+    this.yamlMeta = doc.yamlMeta;
+    this.msytDocInfo = {
+      defaultLocale: "EUen",
+      defaultPath: "NewFile.msyt",
+      msytMeta: null
+    };
+    if (this.yamlMeta.includes("hasATR1: true")) this.selectGame("BotW");
+    else if (this.yamlMeta.includes("hasATR1: false")) this.selectGame("TotK");
+    this.renderDoc(doc.entries);
+    this.syncDocModeUi();
+    this.syncMetaPanel();
+    this.setStatus(`Loaded ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
+  }
+
+  renderDoc(entries) {
+    this.chains = [];
+    this.chainList.innerHTML = "";
+    this.sidebar.innerHTML = "";
+    this.chainList.querySelector("#add-chain-btn")?.remove();
+
+    if (!entries.length) {
+      this.syncEntryUi();
+      return;
+    }
+    entries.forEach((entry) => this.createChain(entry));
+    this.syncEntryUi();
+  }
+
+  appendAddChainButton() {
+    this.chainList.querySelector("#add-chain-btn")?.remove();
+    const btn = document.createElement("div");
+    btn.id = "add-chain-btn";
+    btn.innerHTML = '<span style="font-size:18px">＋</span> Create Entry';
+    btn.addEventListener("click", () => this.createChain(this.makeNewEntry()));
+    this.chainList.appendChild(btn);
+  }
+
+  updatePageSepLabels(chain) {
+    let pageNumber = 1;
+    chain.bubbles.forEach((bubble, index) => {
+      if (index === 0) {
+        if (bubble.pageSep) {
+          bubble.pageSep.remove();
+          bubble.pageSep = null;
+        }
+        return;
+      }
+      if (!bubble.pageSep) {
+        const pageSep = document.createElement("div");
+        pageSep.className = "page-sep";
+        bubble.card.prepend(pageSep);
+        bubble.pageSep = pageSep;
+      }
+      bubble.pageSep.textContent = `↵ Page ${++pageNumber}`;
+    });
+  }
+
+  updateSidebarItem(chain) {
+    chain.sidebarItem.querySelector(".sb-label").textContent = chain.labelInput.value || "";
+    chain.sidebarItem.querySelector(".sb-attr").textContent = chain.attrInput.value || "";
+    chain.sidebarItem.classList.toggle("is-choice", isChoiceLabel(chain.labelInput.value));
+  }
+
+  updateChainModeUi(chain) {
+    chain.attrInput.placeholder = chain.attrKey || (this.exportMode === DOC_MODE_AEON ? "attributeText" : "attributes");
+    this.updateSidebarItem(chain);
+  }
+
+  ensureBcmlContainers(locale, path) {
+    const localeValue = locale || this.msytDocInfo.defaultLocale || "EUen";
+    const pathValue = path || this.msytDocInfo.defaultPath || "NewFile.msyt";
+
+    let localeSection = [...this.chainList.children].find(
+      (element) => element.classList?.contains("msyt-locale-group") && element.dataset.locale === localeValue
+    );
+    let sidebarLocaleSection = [...this.sidebar.children].find(
+      (element) => element.classList?.contains("sb-tree-locale") && element.dataset.locale === localeValue
+    );
+
+    if (!localeSection) {
+      localeSection = document.createElement("section");
+      localeSection.className = "msyt-locale-group";
+      localeSection.dataset.locale = localeValue;
+
+      const localeHeader = document.createElement("div");
+      localeHeader.className = "msyt-locale-hdr";
+
+      const localeTitle = document.createElement("div");
+      localeTitle.className = "msyt-locale-title";
+      localeTitle.textContent = localeValue;
+
+      const localeDelete = document.createElement("button");
+      localeDelete.type = "button";
+      localeDelete.className = "chain-del";
+      localeDelete.title = "Delete entire locale";
+      localeDelete.textContent = "×";
+
+      localeHeader.appendChild(localeTitle);
+      localeHeader.appendChild(localeDelete);
+      localeSection.appendChild(localeHeader);
+      this.chainList.appendChild(localeSection);
+
+      sidebarLocaleSection = document.createElement("section");
+      sidebarLocaleSection.className = "sb-tree-locale";
+      sidebarLocaleSection.dataset.locale = localeValue;
+
+      const sidebarLocaleTitle = document.createElement("div");
+      sidebarLocaleTitle.className = "sb-tree-locale-title";
+      sidebarLocaleTitle.textContent = localeValue;
+      sidebarLocaleSection.appendChild(sidebarLocaleTitle);
+      this.sidebar.appendChild(sidebarLocaleSection);
+
+      localeDelete.addEventListener("click", () => this.deleteBcmlLocale(localeSection, sidebarLocaleSection));
+    }
+
+    let pathSection = [...localeSection.children].find(
+      (element) => element.classList?.contains("msyt-path-group") && element.dataset.path === pathValue
+    );
+    let sidebarPathSection = [...sidebarLocaleSection.children].find(
+      (element) => element.classList?.contains("sb-tree-path") && element.dataset.path === pathValue
+    );
+
+    if (!pathSection) {
+      pathSection = document.createElement("section");
+      pathSection.className = "msyt-path-group";
+      pathSection.dataset.locale = localeValue;
+      pathSection.dataset.path = pathValue;
+
+      const pathHeader = document.createElement("div");
+      pathHeader.className = "msyt-path-hdr";
+
+      const pathTitle = document.createElement("div");
+      pathTitle.className = "msyt-path-title";
+      pathTitle.textContent = pathValue;
+
+      const pathDelete = document.createElement("button");
+      pathDelete.type = "button";
+      pathDelete.className = "chain-del";
+      pathDelete.title = "Delete entire group";
+      pathDelete.textContent = "×";
+
+      pathHeader.appendChild(pathTitle);
+      pathHeader.appendChild(pathDelete);
+      pathSection.appendChild(pathHeader);
+      localeSection.appendChild(pathSection);
+
+      sidebarPathSection = document.createElement("section");
+      sidebarPathSection.className = "sb-tree-path";
+      sidebarPathSection.dataset.locale = localeValue;
+      sidebarPathSection.dataset.path = pathValue;
+
+      const sidebarPathTitle = document.createElement("div");
+      sidebarPathTitle.className = "sb-tree-path-title";
+      sidebarPathTitle.textContent = pathValue;
+
+      const sidebarItems = document.createElement("div");
+      sidebarItems.className = "sb-tree-items";
+
+      sidebarPathSection.appendChild(sidebarPathTitle);
+      sidebarPathSection.appendChild(sidebarItems);
+      sidebarLocaleSection.appendChild(sidebarPathSection);
+
+      pathDelete.addEventListener("click", () =>
+        this.deleteBcmlPath(pathSection, sidebarPathSection, localeSection, sidebarLocaleSection)
+      );
+    }
+
+    return {
+      parent: pathSection,
+      sidebarParent: sidebarPathSection.querySelector(".sb-tree-items"),
+      localeSection,
+      pathSection,
+      sidebarLocaleSection,
+      sidebarPathSection
+    };
+  }
+
+  cleanupBcmlContainers(chain) {
+    if (chain.pathSection && !chain.pathSection.querySelector(".chain")) {
+      chain.pathSection.remove();
+      chain.sidebarPathSection?.remove();
+    }
+    if (chain.localeSection && !chain.localeSection.querySelector(".msyt-path-group")) {
+      chain.localeSection.remove();
+      chain.sidebarLocaleSection?.remove();
+    }
+  }
+
+  removeChain(chain) {
+    chain.section.remove();
+    chain.sidebarItem.remove();
+    this.chains = this.chains.filter((item) => item !== chain);
+  }
+
+  deleteBcmlLocale(localeSection, sidebarLocaleSection) {
+    const doomed = this.chains.filter((chain) => chain.localeSection === localeSection);
+    doomed.forEach((chain) => this.removeChain(chain));
+    localeSection.remove();
+    sidebarLocaleSection?.remove();
+    this.syncEntryUi();
+    this.doSearch(this.searchInput.value);
+    this.setStatus("Locale deleted");
+  }
+
+  deleteBcmlPath(pathSection, sidebarPathSection, localeSection, sidebarLocaleSection) {
+    const doomed = this.chains.filter((chain) => chain.pathSection === pathSection);
+    doomed.forEach((chain) => this.removeChain(chain));
+    pathSection.remove();
+    sidebarPathSection?.remove();
+    if (localeSection && !localeSection.querySelector(".msyt-path-group")) {
+      localeSection.remove();
+      sidebarLocaleSection?.remove();
+    }
+    this.syncEntryUi();
+    this.doSearch(this.searchInput.value);
+    this.setStatus("Group deleted");
+  }
+
+  createChain(entry = this.makeNewEntry(), containers = null) {
+    const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
+    const msytLocale = entry.msytLocale || this.msytDocInfo.defaultLocale || "EUen";
+    const msytPath = entry.msytPath || this.msytDocInfo.defaultPath || "NewFile.msyt";
+    const isChoice = isChoiceLabel(entry.label);
+    const bubbleType = isChoice ? "choice" : entry.bubbleType || (isMsyt ? inferMsytBubbleTypeFromPath(msytPath) : "dialogue");
+    const bcmlContainers =
+      containers || (this.currentDocMode === DOC_MODE_BCML ? this.ensureBcmlContainers(msytLocale, msytPath) : null);
+    const chainId = `chain-${crypto.randomUUID()}`;
+    const section = document.createElement("section");
+    section.className = "chain";
+    section.dataset.chainId = chainId;
+
+    const sidebarItem = document.createElement("div");
+    sidebarItem.className = `sb-item${isChoice ? " is-choice" : ""}`;
+    sidebarItem.dataset.chainId = chainId;
+    sidebarItem.innerHTML = `<span class="sb-label">${escapeHtml(entry.label || "")}</span><span class="sb-attr">${escapeHtml(entry.attrVal || "")}</span>`;
+    sidebarItem.addEventListener("click", () => section.scrollIntoView({ behavior: "smooth", block: "start" }));
+    (bcmlContainers?.sidebarParent || this.sidebar).appendChild(sidebarItem);
+
+    const header = document.createElement("div");
+    header.className = "chain-hdr";
+    header.innerHTML = `
+      <input class="chain-label" placeholder="label" value="${escapeHtml(entry.label || "")}">
+      <input class="chain-attr" placeholder="${escapeHtml(entry.attrKey || "attributeText")}" value="${escapeHtml(entry.attrVal || "")}">
+      <select class="type-sel"></select>
+      <button type="button" class="chain-del" title="Delete entry">×</button>
+    `;
+    section.appendChild(header);
+
+    const labelInput = header.querySelector(".chain-label");
+    const attrInput = header.querySelector(".chain-attr");
+    const typeSelect = header.querySelector(".type-sel");
+    const deleteBtn = header.querySelector(".chain-del");
+
+    TYPE_OPTIONS.forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      typeSelect.appendChild(option);
+    });
+    typeSelect.value = bubbleType;
+
+    const bubbleList = document.createElement("div");
+    bubbleList.className = "bubble-list";
+    section.appendChild(bubbleList);
+
+    const choicePills = document.createElement("div");
+    choicePills.className = "choice-pills";
+    section.appendChild(choicePills);
+
+    const chain = {
+      id: chainId,
+      section,
+      bubbleList,
+      choicePills,
+      labelInput,
+      attrInput,
+      typeSelect,
+      sidebarItem,
+      bubbles: [],
+      attrKey: entry.attrKey || (this.currentDocMode === DOC_MODE_AEON ? "attributeText" : "attributes"),
+      msytHasAttributes: !!entry.msytHasAttributes,
+      msytLocale,
+      msytPath,
+      localeSection: bcmlContainers?.localeSection || null,
+      pathSection: bcmlContainers?.pathSection || null,
+      sidebarLocaleSection: bcmlContainers?.sidebarLocaleSection || null,
+      sidebarPathSection: bcmlContainers?.sidebarPathSection || null
+    };
+    this.chains.push(chain);
+    (bcmlContainers?.parent || this.chainList).appendChild(section);
+
+    labelInput.addEventListener("input", () => {
+      this.updateSidebarItem(chain);
+      this.refreshChoicePills();
+      this.doSearch(this.searchInput.value);
+    });
+    attrInput.addEventListener("input", () => {
+      chain.msytHasAttributes = chain.msytHasAttributes || attrInput.value !== "";
+      this.updateSidebarItem(chain);
+      this.doSearch(this.searchInput.value);
+    });
+    typeSelect.addEventListener("change", () => this.applyChainType(chain, typeSelect.value));
+    deleteBtn.addEventListener("click", () => this.deleteChain(chain));
+
+    const pages = splitPages(entry.content);
+    pages.forEach((page, index) => this.addBubble(chain, page, null, index === 0 ? null : "pageBreak"));
+    this.applyChainType(chain, bubbleType, true);
+    const snapshot = [...chain.bubbles];
+    snapshot.forEach((bubble) => {
+      const raw = bubble.content.dataset.raw ?? serializeContent(bubble.content);
+      if (raw.split("\n").length > 3) this.autoSplitBubble(bubble);
+    });
+    this.updateChainModeUi(chain);
+    this.refreshChoicePills();
+    this.doSearch(this.searchInput.value);
+    this.syncEntryUi();
+    return chain;
+  }
+
+  deleteChain(chain) {
+    this.removeChain(chain);
+    if (this.currentDocMode === DOC_MODE_BCML) this.cleanupBcmlContainers(chain);
+    this.refreshChoicePills();
+    this.syncEntryUi();
+    this.doSearch(this.searchInput.value);
+    this.setStatus("Entry deleted");
+  }
+
+  applyChainType(chain, type, initial = false) {
+    const config = BubbleType[type];
+    if (!config) return;
+    if (config.isSingleton && chain.bubbles.length > 1) {
+      if (!initial && !window.confirm("This bubble type allows only one bubble. Keep only the first page?")) {
+        chain.typeSelect.value = chain.section.dataset.type || "dialogue";
+        return;
+      }
+      const [first, ...rest] = chain.bubbles;
+      rest.forEach((bubble) => bubble.card.remove());
+      chain.bubbles = first ? [first] : [];
+      if (chain.bubbles[0]) chain.bubbles[0].joinKind = null;
+    }
+    chain.section.dataset.type = type;
+    chain.bubbles.forEach((bubble) => this.applyBubbleType(bubble, type));
+    // this.setStatus(`Type: ${type}`);
+  }
+
+  applyBubbleType(bubble, type) {
+    const bubbleEl = bubble.bubble;
+    bubbleEl.dataset.type = type;
+    bubbleEl.className = `bubble ${type}`;
+    bubble.card.dataset.type = type;
+    bubble.bubble.closest(".bubble-list")?.classList.toggle("is-singleton", BubbleType[type]?.isSingleton || false);
+    this.updateBubbleOverflow(bubble, type);
+  }
+
+  placeCaretAtBoundary(content, atStart) {
+    const target = content.firstElementChild || content.appendChild(document.createElement("div"));
+    const selection = getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(atStart ? target : content.lastElementChild || target);
+    range.collapse(atStart);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  setCaretAtVisibleOffset(content, offset) {
+    const blocks = Array.from(content.childNodes);
+    let remaining = Math.max(0, offset);
+    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+      const block = blocks[blockIndex];
+      if (blockIndex > 0) {
+        remaining -= 1;
+        if (remaining <= 0) {
+          const range = document.createRange();
+          range.selectNodeContents(block);
+          range.collapse(true);
+          const selection = getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+      }
+      if (block.nodeType === Node.TEXT_NODE) {
+        const len = block.textContent?.length || 0;
+        if (remaining <= len) {
+          const range = document.createRange();
+          range.setStart(block, remaining);
+          range.collapse(true);
+          const selection = getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+        remaining -= len;
+        continue;
+      }
+      if (block.nodeType !== Node.ELEMENT_NODE) continue;
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const len = node.textContent?.length || 0;
+        if (remaining <= len) {
+          const range = document.createRange();
+          range.setStart(node, remaining);
+          range.collapse(true);
+          const selection = getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+        remaining -= len;
+        node = walker.nextNode();
+      }
+      if (!remaining) {
+        const range = document.createRange();
+        range.selectNodeContents(block);
+        const hasMarkerChild = Array.from(block.childNodes).some(
+          (child) => child.nodeType === Node.ELEMENT_NODE && child.dataset?.rawTag != null
+        );
+        range.collapse(hasMarkerChild ? false : true);
+        const selection = getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return;
+      }
+    }
+    this.placeCaretAtBoundary(content, false);
+  }
+
+  locateVisibleDomPosition(content, offset) {
+    const blocks = Array.from(content.childNodes);
+    let remaining = Math.max(0, offset);
+    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+      const block = blocks[blockIndex];
+      if (blockIndex > 0) {
+        remaining -= 1;
+        if (remaining <= 0) return { node: block, offset: 0 };
+      }
+      if (block.nodeType === Node.TEXT_NODE) {
+        const len = block.textContent?.length || 0;
+        if (remaining <= len) return { node: block, offset: remaining };
+        remaining -= len;
+        continue;
+      }
+      if (block.nodeType !== Node.ELEMENT_NODE) continue;
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const len = node.textContent?.length || 0;
+        if (remaining <= len) return { node, offset: remaining };
+        remaining -= len;
+        node = walker.nextNode();
+      }
+      if (!remaining) {
+        const hasMarkerChild = Array.from(block.childNodes).some(
+          (child) => child.nodeType === Node.ELEMENT_NODE && child.dataset?.rawTag != null
+        );
+        return { node: block, offset: hasMarkerChild ? block.childNodes.length : 0 };
+      }
+    }
+    return { node: content, offset: content.childNodes.length };
+  }
+
+  setSelectionVisibleOffsets(content, start, end) {
+    const from = Math.min(start, end);
+    const to = Math.max(start, end);
+    const startPos = this.locateVisibleDomPosition(content, from);
+    const endPos = this.locateVisibleDomPosition(content, to);
+    if (!startPos?.node || !endPos?.node) return;
+    const range = document.createRange();
+    range.setStart(startPos.node, startPos.offset);
+    range.setEnd(endPos.node, endPos.offset);
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  placeCaretFromPoint(content, clientX, clientY) {
+    const selection = getSelection();
+    let placed = false;
+
+    if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(clientX, clientY);
+      if (pos && content.contains(pos.offsetNode)) {
+        const range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        placed = true;
+      }
+    } else if (document.caretRangeFromPoint) {
+      const range = document.caretRangeFromPoint(clientX, clientY);
+      if (range && content.contains(range.startContainer)) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+        placed = true;
+      }
+    }
+
+    if (placed) return;
+
+    const blocks = [...content.children];
+    if (!blocks.length) {
+      this.placeCaretAtBoundary(content, true);
+      return;
+    }
+
+    const firstRect = blocks[0].getBoundingClientRect();
+    const lastRect = blocks[blocks.length - 1].getBoundingClientRect();
+    if (clientX <= firstRect.left || clientY <= firstRect.top) {
+      this.placeCaretAtBoundary(content, true);
+      return;
+    }
+    if (clientX >= lastRect.right || clientY >= lastRect.bottom) {
+      this.placeCaretAtBoundary(content, false);
+      return;
+    }
+
+    const contentRect = content.getBoundingClientRect();
+    this.placeCaretAtBoundary(content, clientX <= contentRect.left + contentRect.width / 2);
+  }
+
+  getVisibleOffsetFromPoint(content, clientX, clientY) {
+    this.placeCaretFromPoint(content, clientX, clientY);
+    const selection = getSelection();
+    if (!selection || selection.rangeCount === 0) return 0;
+    const range = selection.getRangeAt(0);
+    if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) return 0;
+    return getSelectionTextOffsets(content, range).startOff;
+  }
+
+  restoreUndoState(content, raw) {
+    renderRawToContent(content, raw);
+    content.dataset.raw = raw;
+    const bubbleRecord = this.findBubbleByContent(content);
+    if (!bubbleRecord) return;
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(bubbleRecord.chain);
+    this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+  }
+
+  doUndo(content) {
+    const stack = getUndoStack(content);
+    if (!stack.length) return;
+    const current = content.dataset.raw ?? serializeContent(content);
+    getRedoStack(content).push(current);
+    this.restoreUndoState(content, stack.pop());
+  }
+
+  doRedo(content) {
+    const stack = getRedoStack(content);
+    if (!stack.length) return;
+    const current = content.dataset.raw ?? serializeContent(content);
+    getUndoStack(content).push(current);
+    this.restoreUndoState(content, stack.pop());
+  }
+
+  addBubble(chain, raw = "", afterBubble = null, joinKind = "pageBreak") {
+    if (BubbleType[chain.typeSelect.value]?.isSingleton && chain.bubbles.length >= 1) return null;
+
+    const card = document.createElement("div");
+    card.className = "bubble-card bubble-outer";
+
+    const metaBar = document.createElement("div");
+    metaBar.className = "meta-bar";
+    card.appendChild(metaBar);
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.innerHTML = `<div class="bubble-content" contenteditable="true"><\/div>`;
+    const fmtPopup = document.createElement("div");
+    fmtPopup.className = "fmt-popup";
+    this.buildFmtPopup(fmtPopup);
+    bubble.appendChild(fmtPopup);
+    card.appendChild(bubble);
+
+    const bubbleButtons = document.createElement("div");
+    bubbleButtons.className = "bub-btns";
+    bubbleButtons.innerHTML = `
+      <button class="bub-btn btn-add-bubble" title="Add page">+<\/button>
+      <button class="bub-btn del btn-del-bubble" title="Delete page">×<\/button>
+    `;
+    card.appendChild(bubbleButtons);
+
+    const content = bubble.querySelector(".bubble-content");
+    renderRawToContent(content, raw);
+
+    const bubbleRecord = {
+      chain,
+      card,
+      bubble,
+      fmtPopup,
+      metaBar,
+      content,
+      pageSep: null,
+      joinKind: afterBubble || chain.bubbles.length ? joinKind || "pageBreak" : null
+    };
+
+    const insertIndex = afterBubble ? chain.bubbles.indexOf(afterBubble) + 1 : chain.bubbles.length;
+    if (afterBubble && afterBubble.card.nextSibling) {
+      chain.bubbleList.insertBefore(card, afterBubble.card.nextSibling);
+    } else {
+      chain.bubbleList.appendChild(card);
+    }
+    chain.bubbles.splice(insertIndex, 0, bubbleRecord);
+    if (chain.bubbles[0]) chain.bubbles[0].joinKind = null;
+    this.updatePageSepLabels(chain);
+
+    bubbleButtons.querySelector(".btn-add-bubble").addEventListener("click", () => this.addBubble(chain, "", bubbleRecord, "pageBreak"));
+    bubbleButtons.querySelector(".btn-del-bubble").addEventListener("click", () => this.deleteBubble(bubbleRecord));
+
+    bubble.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest(".bub-btn")) return;
+      const marker = event.target.closest(".tag-node, .pause-node");
+      const isDirectSurface = event.target === bubble || event.target === content;
+      if (marker || isDirectSurface) {
+        event.preventDefault();
+        content.focus();
+        const anchor = this.getVisibleOffsetFromPoint(content, event.clientX, event.clientY);
+        this.surfaceDragSelection = { content, anchor };
+        if (!content.firstElementChild?.textContent && !content.textContent) {
+          const target = content.firstElementChild || content.appendChild(document.createElement("div"));
+          const selection = getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(target);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      }
+    });
+
+    content.addEventListener("focus", () => {
+      this.activeContent = content;
+      this.captureTagSelection(content, true);
+      this.checkFmtSel(content, fmtPopup);
+    });
+    content.addEventListener("beforeinput", (event) => {
+      content._pendingInputEdit = null;
+      capturePendingInputEdit(content, event.inputType);
+      const selection = getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) return;
+      const { startOff, endOff } = getSelectionTextOffsets(content, range);
+      const raw = content.dataset.raw ?? "";
+      const plain = rawToPlainText(raw);
+
+      if (event.inputType === "insertParagraph" || event.inputType === "insertLineBreak") {
+        event.preventDefault();
+        saveUndo(content);
+        content._pendingInputEdit = null;
+        const nextRaw = spliceVisibleRange(raw, startOff, endOff, "\n", "after");
+        this.applyContentRawEdit(bubbleRecord, nextRaw, startOff + 1);
+        return;
+      }
+
+      if ((event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward") && startOff === endOff) {
+        const deleteStart = event.inputType === "deleteContentBackward" ? Math.max(0, startOff - 1) : startOff;
+        const deleteEnd = event.inputType === "deleteContentBackward" ? startOff : Math.min(startOff + 1, plain.length);
+        if (plain.slice(deleteStart, deleteEnd) === "\n") {
+          event.preventDefault();
+          saveUndo(content);
+          content._pendingInputEdit = null;
+          const nextRaw = spliceVisibleRange(raw, deleteStart, deleteEnd, "");
+          this.applyContentRawEdit(bubbleRecord, nextRaw, deleteStart);
+          return;
+        }
+      }
+
+      if (
+        ["insertText", "insertLineBreak", "insertParagraph", "deleteContentBackward", "deleteContentForward", "deleteByCut", "insertFromPaste"].includes(
+          event.inputType
+        )
+      ) {
+        saveUndo(content);
+      }
+      if (event.inputType !== "deleteContentBackward" && event.inputType !== "deleteContentForward") return;
+      if (startOff !== endOff) return;
+      const tag = getBoundaryTag(raw, startOff, event.inputType === "deleteContentBackward" ? -1 : 1);
+      if (!tag) return;
+      if (isProtectedDeleteTag(tag)) return;
+      event.preventDefault();
+      content._pendingInputEdit = null;
+      saveUndo(content);
+      const nextRaw = removeTagAndPairedReset(raw, tag);
+      renderRawToContent(content, nextRaw);
+      content.dataset.raw = nextRaw;
+      content.focus();
+      this.setCaretAtVisibleOffset(content, Math.min(startOff, rawToPlainText(nextRaw).length));
+      this.syncMetaBar(bubbleRecord);
+      this.refreshChoicePills(chain);
+      this.updateBubbleOverflow(bubbleRecord, chain.typeSelect.value);
+      this.checkFmtSel(content, fmtPopup);
+    });
+    content.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.code === "KeyZ" && !event.shiftKey) {
+        event.preventDefault();
+        this.doUndo(content);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && (event.code === "KeyY" || (event.shiftKey && event.code === "KeyZ"))) {
+        event.preventDefault();
+        this.doRedo(content);
+        return;
+      }
+      if (event.code === "Enter" && event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        this.addBubble(chain, "", bubbleRecord, "pageBreak");
+      }
+    });
+    content.addEventListener("keyup", () => {
+      if (content.childNodes.length === 0) {
+        const newDiv = document.createElement("div");
+        content.appendChild(newDiv);
+        getSelection().getRangeAt(0).setStart(newDiv, 0);
+      } else if (content.childNodes.length === 1 && !content.firstElementChild) {
+        const newDiv = document.createElement("div");
+        newDiv.textContent = content.textContent;
+        content.textContent = "";
+        content.appendChild(newDiv);
+        getSelection().getRangeAt(0).selectNodeContents(newDiv);
+        getSelection().collapseToEnd();
+      }
+      this.captureTagSelection(content, true);
+      this.checkFmtSel(content, fmtPopup);
+    });
+    content.addEventListener("mouseup", () => {
+      this.captureTagSelection(content, true);
+      this.checkFmtSel(content, fmtPopup);
+    });
+    content.addEventListener("blur", () => {
+      ensureEditableStructure(content);
+      this.syncBubbleState(bubbleRecord);
+      renderRawToContent(content, content.dataset.raw ?? "");
+      fmtPopup.classList.remove("show");
+    });
+    content.addEventListener("input", () => {
+      this.syncBubbleState(bubbleRecord);
+      this.checkFmtSel(content, fmtPopup);
+    });
+    content.addEventListener("paste", (event) => this.insertPlaintext(event));
+    content.addEventListener("drop", (event) => this.insertPlaintext(event));
+    content.addEventListener("dblclick", (event) => {
+      const tag = event.target.closest(".tag-token");
+      if (tag) this.openRaw(bubbleRecord);
+    });
+
+    this.syncBubbleState(bubbleRecord);
+    this.applyBubbleType(bubbleRecord, chain.typeSelect.value);
+    return bubbleRecord;
+  }
+
+  deleteBubble(bubbleRecord) {
+    const { chain, card } = bubbleRecord;
+    chain.bubbles = chain.bubbles.filter((item) => item !== bubbleRecord);
+    card.remove();
+    if (!chain.bubbles.length) {
+      this.addBubble(chain, "");
+    }
+    if (chain.bubbles[0]) chain.bubbles[0].joinKind = null;
+    this.updatePageSepLabels(chain);
+    this.applyChainType(chain, chain.typeSelect.value, true);
+    this.setStatus("Bubble deleted");
+  }
+
+  insertPlaintext(event) {
+    event.preventDefault();
+    const text = event.clipboardData?.getData("text/plain") ?? event.dataTransfer?.getData("text/plain") ?? "";
+    if (!text) return;
+    document.execCommand("insertText", false, text);
+  }
+
+  applyContentRawEdit(bubbleRecord, nextRaw, caretOffset) {
+    const { content, chain, fmtPopup } = bubbleRecord;
+    renderRawToContent(content, nextRaw);
+    content.dataset.raw = nextRaw;
+    content.focus();
+    this.setCaretAtVisibleOffset(content, Math.min(caretOffset, rawToPlainText(nextRaw).length));
+    this.captureTagSelection(content, true);
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(chain);
+    this.updateBubbleOverflow(bubbleRecord, chain.typeSelect.value);
+    this.checkFmtSel(content, fmtPopup);
+  }
+
+  applyFormat(type, value) {
+    const content = this.activeContent;
+    if (!content) return;
+    const selection = getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) return;
+
+    const { startOff, endOff } = getSelectionTextOffsets(content, range);
+    const bubbleRecord = this.findBubbleByContent(content);
+    if (!bubbleRecord) return;
+    const raw = content.dataset.raw ?? serializeContent(content);
+
+    if (startOff === endOff) {
+      if (value == null) return;
+      saveUndo(content);
+      const nextRaw = spliceVisibleRange(raw, startOff, endOff, FORMAT_DEFS[type].emitTag(value));
+      renderRawToContent(content, nextRaw);
+      content.dataset.raw = nextRaw;
+      content.focus();
+      this.setCaretAtVisibleOffset(content, startOff);
+      this.syncMetaBar(bubbleRecord);
+      this.refreshChoicePills(bubbleRecord.chain);
+      this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+      bubbleRecord.fmtPopup?.classList.remove("show");
+      return;
+    }
+
+    saveUndo(content);
+    const nextRaw = applyFormatToRange(raw, startOff, endOff, type, value);
+    renderRawToContent(content, nextRaw);
+    content.dataset.raw = nextRaw;
+    content.focus();
+    this.setCaretAtVisibleOffset(content, endOff);
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(bubbleRecord.chain);
+    this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+    bubbleRecord.fmtPopup?.classList.remove("show");
+  }
+
+  syncBubbleState(bubbleRecord) {
+    const content = bubbleRecord.content;
+    const isIsolatedBreak = content.innerHTML === "<br>";
+    const isIsolatedBreakNode =
+      content.childElementCount === 1 &&
+      content.firstElementChild &&
+      content.firstElementChild.innerHTML === "<br>";
+    if (isIsolatedBreak || isIsolatedBreakNode) {
+      content.innerHTML = "";
+    }
+    const previousRaw = bubbleRecord.content.dataset.raw ?? "";
+    const previousPlain = rawToPlainText(previousRaw);
+    const nextPlain = contentToPlainText(bubbleRecord.content);
+    const pendingEdit = content._pendingInputEdit || null;
+    content._pendingInputEdit = null;
+    let nextRaw = previousRaw;
+
+    if (previousPlain !== nextPlain) {
+      let prefix = 0;
+      let oldSuffix = previousPlain.length;
+      let newSuffix = nextPlain.length;
+
+      if (pendingEdit && ["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(pendingEdit.inputType)) {
+        prefix = pendingEdit.start;
+        oldSuffix = pendingEdit.end;
+        newSuffix = pendingEdit.start;
+        nextRaw = spliceVisibleRange(previousRaw, pendingEdit.start, pendingEdit.end, "");
+      } else if (pendingEdit && ["insertText", "insertLineBreak", "insertParagraph", "insertFromPaste"].includes(pendingEdit.inputType)) {
+        prefix = pendingEdit.start;
+        oldSuffix = pendingEdit.end;
+        const insertedLen = Math.max(0, nextPlain.length - (previousPlain.length - (pendingEdit.end - pendingEdit.start)));
+        const insertedText = nextPlain.slice(pendingEdit.start, pendingEdit.start + insertedLen);
+        newSuffix = pendingEdit.start + insertedText.length;
+        nextRaw = spliceVisibleRange(previousRaw, pendingEdit.start, pendingEdit.end, insertedText, "after");
+      } else {
+        while (prefix < previousPlain.length && prefix < nextPlain.length && previousPlain[prefix] === nextPlain[prefix]) prefix++;
+        while (oldSuffix > prefix && newSuffix > prefix && previousPlain[oldSuffix - 1] === nextPlain[newSuffix - 1]) {
+          oldSuffix--;
+          newSuffix--;
+        }
+        nextRaw = spliceVisibleRange(previousRaw, prefix, oldSuffix, nextPlain.slice(prefix, newSuffix));
+      }
+      nextRaw = normalizeLeadingFormatDeletion(previousRaw, nextRaw, pendingEdit, prefix, oldSuffix, newSuffix);
+      bubbleRecord.content.dataset.raw = nextRaw;
+      if (pendingEdit && ["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(pendingEdit.inputType) && pendingEdit.start !== pendingEdit.end) {
+        renderRawToContent(content, nextRaw);
+        content.focus();
+        this.setCaretAtVisibleOffset(content, Math.min(newSuffix, rawToPlainText(nextRaw).length));
+      }
+    } else {
+      nextRaw = previousRaw || serializeContent(bubbleRecord.content);
+      bubbleRecord.content.dataset.raw = nextRaw;
+    }
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(bubbleRecord.chain);
+    this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+  }
+
+  refreshChoicePills(targetChain = null) {
+    const chains = targetChain ? [targetChain] : this.chains;
+    chains.forEach((chain) => {
+      if (!chain.choicePills) return;
+      chain.choicePills.innerHTML = "";
+      const allRaw = chain.bubbles.map((bubble) => bubble.content.dataset.raw ?? serializeContent(bubble.content)).join("");
+      const refs = [...allRaw.matchAll(/label\d*="(\d+)"/g)].map((match) => match[1]).filter((value, index, arr) => arr.indexOf(value) === index);
+      if (!refs.length) return;
+      refs.forEach((ref) => {
+        const sameFile = this.chains.find(
+          (candidate) =>
+            candidate !== chain &&
+            candidate.msytLocale === chain.msytLocale &&
+            candidate.msytPath === chain.msytPath &&
+            (candidate.labelInput.value === ref || candidate.labelInput.value === ref.padStart(4, "0"))
+        );
+        const target =
+          sameFile ||
+          this.chains.find(
+            (candidate) => candidate !== chain && (candidate.labelInput.value === ref || candidate.labelInput.value === ref.padStart(4, "0"))
+          );
+        let text = ref;
+        if (target?.bubbles?.[0]) {
+          const firstRaw = target.bubbles[0].content.dataset.raw ?? serializeContent(target.bubbles[0].content);
+          text = rawToPlainText(firstRaw).trim() || ref;
+        }
+        const pill = document.createElement("div");
+        pill.className = "choice-pill";
+        pill.textContent = text;
+        pill.title = `label: ${ref}`;
+        pill.addEventListener("click", () => {
+          if (target) {
+            target.section.scrollIntoView({ behavior: "smooth", block: "start" });
+            return;
+          }
+          const padded = ref.padStart(4, "0");
+          const fallback = this.chains.find((candidate) => candidate.labelInput.value === padded || candidate.labelInput.value === ref);
+          fallback?.section.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        chain.choicePills.appendChild(pill);
+      });
+    });
+  }
+
+  canAutoSplitChain(chain) {
+    if (this.currentDocMode !== DOC_MODE_BCML) return true;
+    const path = String(chain.msytPath || this.msytDocInfo.defaultPath || "");
+    return path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/");
+  }
+
+  canMsytSoftSplitStayText(chain) {
+    const path = String(chain.msytPath || this.msytDocInfo.defaultPath || "");
+    return path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/");
+  }
+
+  autoSplitBubble(bubbleRecord) {
+    if (!this.autoSplit || !this.canAutoSplitChain(bubbleRecord.chain)) return;
+    const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
+    const lines = raw.split("\n");
+    if (lines.length <= 3) return;
+    const keepRaw = lines.slice(0, 3).join("\n");
+    const overflowRaw = lines.slice(3).join("\n");
+    renderRawToContent(bubbleRecord.content, keepRaw);
+    bubbleRecord.content.dataset.raw = keepRaw;
+    this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+    const newBubble = this.addBubble(bubbleRecord.chain, overflowRaw, bubbleRecord, "newline");
+    if (newBubble) this.autoSplitBubble(newBubble);
+  }
+
+  syncMetaBar(bubbleRecord) {
+    const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
+    const tags = parseRawTags(raw).filter((tag) => tag.name !== "color" && tag.name !== "size");
+    bubbleRecord.metaBar.innerHTML = "";
+    tags.forEach((tag, tagIndex) => {
+      const chip = document.createElement("button");
+      chip.className = "meta-btn";
+      chip.type = "button";
+      const color = tagColor(tag.name);
+      chip.style.borderColor = color;
+      chip.style.color = color;
+      if (tag.name.startsWith("setEmotion")) chip.textContent = String(tag.args.emotion || "?").replace("_Face", "");
+      else if (tag.name === "setVoice") chip.textContent = `🔊 ${tag.args.asset || "?"}`;
+      else if (tag.name === "animation") chip.textContent = `🎬 ${tag.args.name || "?"}`;
+      else chip.textContent = tagSummary(tag.rawTag);
+      chip.title = tag.rawTag;
+      chip.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        this.openTE({ bubbleRecord, tagIndex, rawTag: tag.rawTag });
+      });
+      bubbleRecord.metaBar.appendChild(chip);
+    });
+  }
+
+  updateBubbleOverflow(bubbleRecord, type) {
+    const config = BubbleType[type];
+    const content = bubbleRecord.content;
+    let charCount = 0;
+    for (const block of content.childNodes) {
+      charCount += block.textContent.length;
+    }
+    content.classList.add("test-line-count");
+    let lineCount = 0;
+    for (const block of content.children) {
+      lineCount += block.getClientRects().length;
+    }
+    content.classList.remove("test-line-count");
+    const overflow = lineCount > config.lineCount || (config.charLimit && charCount > config.charLimit);
+    bubbleRecord.bubble.classList.toggle("overflow", overflow);
+  }
+
+  openRaw(bubbleRecord) {
+    this.rawTarget = bubbleRecord;
+    this.rawTextarea.value = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
+    this.rawModal.classList.add("open");
+    this.rawTextarea.focus();
+  }
+
+  closeRaw() {
+    this.rawModal.classList.remove("open");
+    this.rawTarget = null;
+  }
+
+  applyRaw() {
+    if (!this.rawTarget) return;
+    saveUndo(this.rawTarget.content);
+    renderRawToContent(this.rawTarget.content, this.rawTextarea.value);
+    this.syncBubbleState(this.rawTarget);
+    this.closeRaw();
+    this.setStatus("Raw applied");
+  }
+
+  openTE(target) {
+    this.editTarget = target;
+    const { name, args, order } = parseInlineTag(target.rawTag);
+    this.teTitle.textContent = `Tag: ${name}`;
+    this.teFields.innerHTML = "";
+
+    let fieldOrder = order.filter((key) => key !== "unknown");
+    if (/^choice[234]$/.test(name)) {
+      const count = Number(name.slice(-1));
+      fieldOrder = [];
+      for (let i = 1; i <= count; i++) fieldOrder.push(`label${i}`);
+      fieldOrder.push("selectedIndex", "cancelIndex");
+    }
+
+    if (!fieldOrder.length) {
+      const row = document.createElement("div");
+      row.className = "te-row";
+      const label = document.createElement("label");
+      label.textContent = "raw";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.dataset.an = "__raw__";
+      input.value = String(target.rawTag || "").slice(2, -2);
+      input.style.fontFamily = "monospace";
+      row.append(label, input);
+      this.teFields.appendChild(row);
+    } else {
+      fieldOrder.forEach((key) => {
+        const row = document.createElement("div");
+        row.className = "te-row";
+        const label = document.createElement("label");
+        label.textContent = key;
+        const input = document.createElement("input");
+        input.type = "text";
+        input.dataset.an = key;
+        input.value = args[key] ?? "";
+        row.append(label, input);
+        this.teFields.appendChild(row);
+      });
+    }
+
+    this.teModal.classList.add("open");
+  }
+
+  closeTE() {
+    this.teModal.classList.remove("open");
+    this.editTarget = null;
+  }
+
+  saveTE() {
+    if (!this.editTarget) return;
+    const bubbleRecord = this.editTarget.bubbleRecord;
+    saveUndo(bubbleRecord.content);
+    const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
+    const tags = parseRawTags(raw);
+    const targetTag = tags[this.editTarget.tagIndex];
+    if (!targetTag) return;
+
+    const rawInput = this.teFields.querySelector('[data-an="__raw__"]');
+    let newRawTag = "";
+    if (rawInput) {
+      newRawTag = `{{${rawInput.value.trim()}}}`;
+    } else {
+      const { name } = parseInlineTag(this.editTarget.rawTag);
+      const nextArgs = {};
+      const order = [];
+      this.teFields.querySelectorAll("[data-an]").forEach((input) => {
+        const key = input.dataset.an;
+        order.push(key);
+        nextArgs[key] = input.value;
+      });
+      newRawTag = buildInlineTag(name, nextArgs, order);
+    }
+
+    const nextRaw = `${raw.slice(0, targetTag.start)}${newRawTag}${raw.slice(targetTag.end)}`;
+    renderRawToContent(bubbleRecord.content, nextRaw);
+    this.syncBubbleState(bubbleRecord);
+    this.closeTE();
+    this.setStatus("Tag saved");
+  }
+
+  deleteTE() {
+    if (!this.editTarget) return;
+    const bubbleRecord = this.editTarget.bubbleRecord;
+    saveUndo(bubbleRecord.content);
+    const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
+    const tags = parseRawTags(raw);
+    const targetTag = tags[this.editTarget.tagIndex];
+    if (!targetTag) return;
+
+    const nextRaw = `${raw.slice(0, targetTag.start)}${raw.slice(targetTag.end)}`;
+    renderRawToContent(bubbleRecord.content, nextRaw);
+    this.syncBubbleState(bubbleRecord);
+    this.closeTE();
+    this.setStatus("Tag deleted");
+  }
+
+  closeCtx() {
+    this.ctxMenu.classList.remove("open");
+    this.ctxTarget = null;
+    this.ctxSelection = null;
+  }
+
+  handleContextMenu(event) {
+    const tagNode = event.target.closest("[data-raw-tag]");
+    if (tagNode) {
+      event.preventDefault();
+      const content = tagNode.closest(".bubble-content");
+      const bubbleRecord = this.findBubbleByContent(content);
+      if (!bubbleRecord) return;
+      const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
+      const tagIndex = parseRawTags(raw).findIndex((tag) => tag.rawTag === tagNode.dataset.rawTag);
+      if (tagIndex >= 0) this.openTE({ bubbleRecord, tagIndex, rawTag: tagNode.dataset.rawTag });
+      return;
+    }
+
+    const bubble = event.target.closest(".bubble");
+    if (!bubble) {
+      this.closeCtx();
+      return;
+    }
+
+    const content = bubble.querySelector(".bubble-content");
+    const bubbleRecord = this.findBubbleByContent(content);
+    if (!bubbleRecord) return;
+    const selection = getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      if (content.contains(range.startContainer) && content.contains(range.endContainer)) {
+        const { startOff, endOff } = getSelectionTextOffsets(content, range);
+        this.ctxSelection = { content, start: startOff, end: endOff };
+      } else {
+        this.ctxSelection = null;
+      }
+    } else {
+      this.ctxSelection = null;
+    }
+    event.preventDefault();
+    this.ctxTarget = bubbleRecord;
+    this.ctxMenu.style.left = `${Math.min(event.clientX, window.innerWidth - 200)}px`;
+    this.ctxMenu.style.top = `${Math.min(event.clientY, window.innerHeight - 80)}px`;
+    this.ctxMenu.classList.add("open");
+  }
+
+  openRawFromContext() {
+    if (!this.ctxTarget) return;
+    this.openRaw(this.ctxTarget);
+    this.closeCtx();
+  }
+
+  ctxInsertDelay(tagName) {
+    if (!this.ctxTarget) return;
+    const bubbleRecord = this.ctxTarget;
+    const rawTag = `{{${tagName}}}`;
+    const target = bubbleRecord.content;
+    saveUndo(target);
+    const saved = this.ctxSelection && this.ctxSelection.content === target ? this.ctxSelection : null;
+    const raw = target.dataset.raw ?? serializeContent(target);
+    const start = saved ? saved.start : rawToPlainText(raw).length;
+    const end = saved ? saved.end : start;
+    const nextRaw = spliceVisibleRange(raw, start, end, rawTag);
+    this.closeCtx();
+    renderRawToContent(target, nextRaw);
+    target.dataset.raw = nextRaw;
+    target.focus();
+    this.setCaretAtVisibleOffset(target, start);
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(bubbleRecord.chain);
+    this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+    this.setStatus("Pause inserted");
+  }
+
+  copyContextRaw() {
+    if (!this.ctxTarget) return;
+    const raw = this.ctxTarget.content.dataset.raw ?? serializeContent(this.ctxTarget.content);
+    navigator.clipboard.writeText(raw).then(() => this.setStatus("Copied with tags"));
+    this.closeCtx();
+  }
+
+  copyContextPlain() {
+    if (!this.ctxTarget) return;
+    const raw = this.ctxTarget.content.dataset.raw ?? serializeContent(this.ctxTarget.content);
+    navigator.clipboard.writeText(rawToPlainText(raw)).then(() => this.setStatus("Copied without tags"));
+    this.closeCtx();
+  }
+
+  findBubbleByContent(content) {
+    for (const chain of this.chains) {
+      const bubble = chain.bubbles.find((item) => item.content === content);
+      if (bubble) return bubble;
+    }
+    return null;
+  }
+
+  serializeChainRaw(chain) {
+    let raw = "";
+    chain.bubbles.forEach((bubble, index) => {
+      const bubbleRaw = bubble.content.dataset.raw ?? serializeContent(bubble.content);
+      if (index > 0) raw += bubble.joinKind === "newline" ? "\n" : "{{pageBreak}}";
+      raw += bubbleRaw;
+    });
+    return raw;
+  }
+
+  serializeMsytChain(chain) {
+    let raw = "";
+    let pageRaw = "";
+    chain.bubbles.forEach((bubble, index) => {
+      const bubbleRaw = bubble.content.dataset.raw ?? serializeContent(bubble.content);
+      if (index > 0) {
+        if (bubble.joinKind === "pageBreak") {
+          raw += "{{pageBreak}}";
+          pageRaw = bubbleRaw;
+        } else {
+          const candidate = pageRaw ? `${pageRaw}\n${bubbleRaw}` : bubbleRaw;
+          if (this.canMsytSoftSplitStayText(chain) && candidate.split("\n").length > 3) {
+            raw += "\n";
+            pageRaw = candidate;
+          } else {
+            raw += "{{pageBreak}}";
+            pageRaw = bubbleRaw;
+          }
+        }
+      } else {
+        pageRaw = bubbleRaw;
+      }
+      raw += bubbleRaw;
+    });
+    return raw;
+  }
+
+  applyGlobalType(type) {
+    if (!type) return;
+    this.chains.forEach((chain) => {
+      chain.typeSelect.value = type;
+      this.applyChainType(chain, type, true);
+    });
+    this.setStatus(`Type applied: ${type}`);
+  }
+
+  collectChains() {
+    return this.chains.map((chain) => ({
+      label: chain.labelInput.value,
+      attrKey: chain.attrKey,
+      attrVal: chain.attrInput.value,
+      raw: this.serializeChainRaw(chain),
+      msytRaw: this.serializeMsytChain(chain),
+      bubbleType: chain.typeSelect.value,
+      msytLocale: chain.msytLocale || this.msytDocInfo.defaultLocale || "EUen",
+      msytPath: chain.msytPath || this.msytDocInfo.defaultPath || "NewFile.msyt",
+      msytHasAttributes: chain.msytHasAttributes || chain.attrInput.value !== ""
+    }));
+  }
+
+  doSearch(query) {
+    const q = String(query || "").trim().toLowerCase();
+    this.chains.forEach((chain) => {
+      const contentText = chain.bubbles
+        .map((bubble) => rawToPlainText(bubble.content.dataset.raw ?? serializeContent(bubble.content)))
+        .join("\n")
+        .toLowerCase();
+      const haystack = `${chain.labelInput.value}\n${chain.attrInput.value}\n${chain.msytLocale || ""}\n${chain.msytPath || ""}\n${contentText}`.toLowerCase();
+      const visible = !q || haystack.includes(q);
+      chain.section.hidden = !visible;
+      chain.sidebarItem.hidden = !visible;
+    });
+    if (this.currentDocMode === DOC_MODE_BCML) {
+      this.chainList.querySelectorAll(".msyt-path-group").forEach((group) => {
+        group.hidden = !group.querySelector(".chain:not([hidden])");
+      });
+      this.chainList.querySelectorAll(".msyt-locale-group").forEach((group) => {
+        group.hidden = !group.querySelector(".msyt-path-group:not([hidden])");
+      });
+      this.sidebar.querySelectorAll(".sb-tree-path").forEach((group) => {
+        group.hidden = !group.querySelector(".sb-item:not([hidden])");
+      });
+      this.sidebar.querySelectorAll(".sb-tree-locale").forEach((group) => {
+        group.hidden = !group.querySelector(".sb-tree-path:not([hidden])");
+      });
+    }
+  }
+
+  buildAeonYaml(chains) {
+    const meta = this.metaTextarea.value || this.yamlMeta;
+    let output = meta ? `${meta}\n` : "";
+    const includeAttribute = hasATR1(this.currentGame, meta);
+    const parts = [];
+    chains.forEach((chain) => {
+      const entry = [];
+      entry.push("---");
+      entry.push(`label: ${chain.label}`);
+      if (includeAttribute) entry.push(`${chain.attrKey}: ${chain.attrVal || ""}`);
+      entry.push("---");
+      entry.push(chain.raw);
+      parts.push(entry.join("\n"));
+    });
+    return `${output}${parts.join("\n\n")}\n`;
+  }
+
+  exportDocument() {
+    const chains = this.collectChains();
+    if (!chains.length) {
+      window.alert("There is nothing to export");
+      return;
+    }
+
+    try {
+      const mode = this.getEffectiveExportMode();
+      let output = "";
+      if (this.currentDocMode === DOC_MODE_BCML) output = buildMsytBcmlJson(chains, this.msytDocInfo, this.currentGame);
+      else if (mode === DOC_MODE_AEON) output = this.buildAeonYaml(chains);
+      else if (mode === DOC_MODE_MSYT) output = buildMsytYaml(chains, this.msytDocInfo, this.currentGame);
+      else output = buildMsytBcmlJson(chains, this.msytDocInfo, this.currentGame);
+
+      const label = this.currentDocMode === DOC_MODE_BCML ? "texts.json" : mode === DOC_MODE_MSYT ? ".msyt" : "YAML";
+      navigator.clipboard.writeText(output).then(
+        () => this.setStatus(`${label} copied`),
+        () => this.setStatus(`Could not copy ${label}`)
+      );
+    } catch (error) {
+      window.alert(`Error: ${error.message}`);
+    }
+  }
+}

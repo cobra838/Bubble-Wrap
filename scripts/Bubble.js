@@ -1,8 +1,4 @@
-import BubbleUtil from "./BubbleUtil.js";
-import BubbleManager from "./BubbleManager.js";
-import BubbleTester from "./BubbleTester.js";
-import Parser from "./Parser.js";
-import PauseDuration from "./enums/PauseDuration.js";
+﻿import BubbleManager from "./BubbleManager.js";
 
 /** Manages the UI for an individual text box. */
 export default class Bubble {
@@ -31,14 +27,11 @@ export default class Bubble {
     }
 
     this.bubbleContentElement = this.element.querySelector(".bubble-content");
-    this.bubbleFormattingOverlay = this.element.querySelector(".formatting-overlay");
     this.btnAddBubbleElement = this.element.querySelector(".btn-add-bubble");
     this.btnDelBubbleElement = this.element.querySelector(".btn-del-bubble");
     this.bubbleValue = "";
     this.bubbleHeight = 0;
     this.lineCount = 0;
-    this.animation = "none";
-    this.sound = "none";
 
     // Populate bubble with first line
     const initLine = this.initializeContents(text);
@@ -62,7 +55,10 @@ export default class Bubble {
     if (index > -1) {
       // Focus the bubble text input when any part of the bubble is clicked
       this.element.addEventListener("mousedown", (e) => {
-        if (e.target == this.element) e.preventDefault(); // prevents unfocus on text when clicked
+        if (e.target.closest(".bubble-btn")) return;
+        if (e.target == this.element || e.target.closest(".bubble-frame")) {
+          e.preventDefault();
+        }
         this.bubbleContentElement.focus();
         // Ensure the cursor is inside the initial `<div>` when the bubble is empty
         if (!this.bubbleContentElement.firstElementChild.textContent) {
@@ -87,64 +83,14 @@ export default class Bubble {
         }
       });
 
-      // Show formatting popup when text within bubble is selected
-      let textSelectTest = () => {
-        let selection = getSelection().getRangeAt(0);
-        // Check if the selection change is within a bubble
-        if (selection && !selection.collapsed && selection.endContainer.parentElement.closest(".bubble") == this.element) {
-          let parentRect = this.element.getBoundingClientRect();
-          let thisRect = this.bubbleFormattingOverlay.getBoundingClientRect();
-          let selectionRect = selection.getBoundingClientRect();
-          this.bubbleFormattingOverlay.style.bottom = parentRect.bottom - selectionRect.top + "px";
-          this.bubbleFormattingOverlay.style.left =
-            selectionRect.left + selectionRect.width / 2 - thisRect.width / 2 - parentRect.left + "px";
-          this.bubbleFormattingOverlay.classList.add("visible");
-          setTimeout(() => {
-            this.bubbleFormattingOverlay.style.transitionProperty = "opacity, transform, bottom, left";
-          }, 100);
-        } else {
-          this.bubbleFormattingOverlay.classList.remove("visible");
-          this.bubbleFormattingOverlay.style.transitionProperty = "opacity, transform";
-        }
-      };
-      document.addEventListener("selectionchange", textSelectTest);
-      document.addEventListener("mousedown", (e) => {
-        if (!this.element.contains(e.target) || e.target.closest(".btn-add-bubble-container")) {
-          this.bubbleFormattingOverlay.classList.remove("visible");
-          this.bubbleFormattingOverlay.style.transitionProperty = "opacity, transform";
-        }
-      });
-
-      // When a formatting button is pressed, apply the formatting on selected text
-      Array.from(this.bubbleFormattingOverlay.children).forEach((el) => {
-        if (el.matches("button")) {
-          el.addEventListener("click", (e) => {
-            let range = getSelection().getRangeAt(0);
-            let color = e.currentTarget.getAttribute("data-color");
-            let size = e.currentTarget.getAttribute("data-size");
-            let newNode;
-            BubbleUtil.splitParentAndInsert(range, (formatContent, currentNode) => {
-              newNode = BubbleUtil.newTextNode(formatContent, {
-                color: color,
-                size: size,
-                node: currentNode
-              });
-              return newNode;
-            });
-            range.setStartAfter(newNode);
-          });
-        }
-      });
-
-      // Perform parsing on anything pasted into the bubble
-      this.bubbleContentElement.addEventListener("paste", (e) => this.parsePaste(e));
-      this.bubbleContentElement.addEventListener("drop", (e) => this.parseDrop(e));
-
+      this.bubbleContentElement.addEventListener("paste", (e) => this.insertPlaintext(e, e.clipboardData.getData("text/plain")));
+      this.bubbleContentElement.addEventListener("drop", (e) => this.insertPlaintext(e, e.dataTransfer.getData("text/plain")));
       this.bubbleContentElement.addEventListener("input", () => this.inputHandler());
       this.inputHandler(); // run once to evaluate overflow status
 
       // When bubble add button is clicked, create a new bubble below this one
       this.btnAddBubbleElement?.addEventListener("mousedown", (e) => {
+        e.preventDefault();
         BubbleManager.addBubble(this);
       });
       this.element.addEventListener("keydown", (e) => {
@@ -153,6 +99,7 @@ export default class Bubble {
 
       // When bubble delete button is clicked, delete this bubble
       this.btnDelBubbleElement?.addEventListener("mousedown", (e) => {
+        e.preventDefault();
         BubbleManager.deleteBubble(this);
         // if (confirm("Are you sure you want to delete this bubble? There is no undo!"))
       });
@@ -220,88 +167,11 @@ export default class Bubble {
     }
   }
 
-  /**
-   * Inserts a textual node into this bubble.
-   * @param {Node} content The content of the node. Can include non-textual nodes.
-   * @param {Object} args A set of parameters for the new node. See {@link BubbleUtil.newTextNode()}.
-   * @param {Range} [range] If provided, the node will be inserted at the end position of this range.
-   * Otherwise, it will be appended to the bubble.
-   * @returns {Node} The new Node.
-   */
-  insertTextNode(content, args, range) {
-    const newNode = BubbleUtil.newTextNode(content, args);
-    if (range) {
-      BubbleUtil.splitParentAndInsert(range, () => {
-        return newNode;
-      });
-      range.deleteContents();
-    } else {
-      this.bubbleContentElement.appendChild(newNode);
-    }
-    return newNode;
-  }
-
-  /**
-   * Inserts a non-textual node into this bubble.
-   * @param {Object} args A set of parameters for the new node. See {@link BubbleUtil.newNonTextNode()}.
-   * @param {Function} callback The callback to run when the UI of this node is clicked.
-   * @param {Range} [range] If provided, the node will be inserted at the end position of this range.
-   * Otherwise, it will be appended to the bubble.
-   * @returns {Node} The new Node.
-   */
-  insertNonTextNode(args, callback, range) {
-    const newNode = BubbleUtil.newNonTextNode(args, callback);
-    if (range) {
-      // Collapse the selection to the end point so `Range.insertNode()` inserts at the end point
-      range.collapse(false);
-      BubbleUtil.splitParentAndInsert(range, () => {
-        return newNode;
-      });
-    } else {
-      this.bubbleContentElement.appendChild(newNode);
-    }
-    return newNode;
-  }
-
-  /**
-   * Inserts a pause control node into this bubble.
-   * @param {PauseDuration | number} duration The duration value of the pause node.
-   * @param {Range} [range] If provided, the node will be inserted at the end position of this range.
-   * Otherwise, it will be appended to the bubble.
-   * @returns {Node} The new Node.
-   */
-  insertPauseNode(duration, range) {
-    let pauseNode = this.insertNonTextNode({ pause: duration }, Bubble.pauseNodeCallback, range);
-
-    // Check for a pause node immediately preceding the current one;
-    // if one exists, remove it
-    const previousSibling = pauseNode.previousElementSibling;
-    if (previousSibling?.getAttribute("data-pause")) previousSibling.remove();
-
-    return pauseNode;
-  }
-
-  static pauseNodeCallback = (e) => {
-    const duration = e.currentTarget.getAttribute("data-pause");
-    if (confirm(`Delete this ${duration}${isNaN(duration) ? "" : "-frame"} pause?`)) {
-      e.currentTarget.remove();
-    }
-  };
-
-  parsePaste(e) {
+  insertPlaintext(e, plaintext) {
     e.preventDefault();
-    let plaintext = e.clipboardData.getData("text/plain");
-    this.parsePastedContent(plaintext);
-  }
-
-  parseDrop(e) {
-    e.preventDefault();
-    let plaintext = e.dataTransfer.getData("text/plain");
-    this.parsePastedContent(plaintext);
-  }
-
-  parsePastedContent(plaintext) {
-    const filteredText = Parser.filter(plaintext);
-    Parser.appendAsBubbles(filteredText, this);
+    if (!plaintext) return;
+    this.bubbleContentElement.focus();
+    document.execCommand("insertText", false, plaintext);
+    this.inputHandler();
   }
 }

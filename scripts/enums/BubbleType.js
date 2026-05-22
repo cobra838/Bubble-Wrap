@@ -48,6 +48,12 @@ export default {
     lineCount: 8,
     isSingleton: true
   },
+  choice: {
+    className: "choice",
+    charLimit: null,
+    lineCount: 3,
+    isSingleton: false
+  },
   tip: {
     className: "tip",
     charLimit: null,

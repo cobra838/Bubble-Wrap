@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <title>Bubble Wrap</title>
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preload" href="assets/fonts/Calamity-Bold.woff2" as="font" crossorigin />
     <link rel="preload" href="assets/fonts/Calamity-Regular.woff2" as="font" crossorigin />
@@ -12,61 +13,102 @@
     <link rel="manifest" href="manifest.json" />
   </head>
   <body>
-    <div class="app-container">
-      <div class="app">
-        <div class="sidebar">
-          <div class="sidebar-section title-block">
-            <h1 class="title">Bubble Wrap</h1>
-            <p class="version">v0.13.1</p>
-          </div>
-          <div class="sidebar-section">
-            <h2>Export</h2>
-            <div class="sidebar-select-container">
-              <label>Format</label>
-              <div id="export-set-format" class="select-container"></div>
-            </div>
-            <button class="action" id="export-btn" title="Exports all bubbles to the clipboard with the selected format.">
-              Copy to clipboard
-            </button>
-            <a class="description" id="export-docs" href="" target="_blank"></a>
-          </div>
-          <div class="sidebar-section">
-            <h2>About</h2>
-            <p class="warning-modal description">
-              Bubble Wrap is still in the development stage, which means that important features are still missing and some functionality
-              might be broken. Features may be changed at any time, and this will continue to be the case until Bubble Wrap reaches the
-              release stage.
-            </p>
-            <a href="pages/shortcuts.html" target="_blank" title="Open shortcuts page">Shortcuts</a>
-            <a href="pages/changelog.html" target="_blank" title="Open changelog page">Changelog</a>
-            <a href="pages/licenses.html" target="_blank" title="Open licenses page">Licenses</a>
-            <a href="https://github.com/lisa-wolfgang/Bubble-Wrap" target="_blank" title="Open GitHub repository">GitHub</a>
-          </div>
+    <div id="toolbar">
+      <h1>Bubble Wrap</h1>
+      <div class="sep"></div>
+      <button class="tbtn game-btn active" id="btn-botw" onclick="selectGame('BotW')">BotW</button>
+      <button class="tbtn game-btn" id="btn-totk" onclick="selectGame('TotK')">TotK</button>
+      <div class="sep"></div>
+      <div id="file-drop" onclick="document.getElementById('file-input').click()">📂 Open YAML / .msyt / texts.json</div>
+      <input type="file" id="file-input" accept=".yaml,.yml,.json,.msyt" />
+      <div class="sep"></div>
+      <button class="tbtn" id="btn-meta" onclick="toggleMeta()">⚙ Meta</button>
+      <button class="tbtn" id="btn-export" onclick="exportYaml()">📋 Export</button>
+      <div id="export-mode-wrap" class="show">
+        <span class="mode-label">Format:</span>
+        <button class="tbtn export-mode-btn active" id="btn-exp-yaml" onclick="setExportMode('aeon-yaml')">AEON</button>
+        <button class="tbtn export-mode-btn" id="btn-exp-msyt" onclick="setExportMode('msyt-yaml')">MSYT</button>
+        <button class="tbtn export-mode-btn" id="btn-exp-bcml" onclick="setExportMode('msyt-bcml')" style="display: none;">texts.json</button>
+      </div>
+      <button class="tbtn" id="btn-tag" onclick="openTP()">＋ Tag</button>
+      <button class="tbtn" id="btn-autosplit" onclick="toggleAutoSplit()" title="Auto-wrap into a new bubble after 3 lines">✂ Auto-split: ON</button>
+      <div class="sep"></div>
+      <label style="font-size:12px;color:#666" for="global-type-select">All:</label>
+      <select id="global-type-select" class="tbtn" style="padding:4px 6px;font-size:12px;cursor:pointer" onchange="applyGlobalType(this.value)">
+        <option value="">— type —</option>
+        <option value="dialogue">NPC</option>
+        <option value="signboard">Sign</option>
+        <option value="item">Item</option>
+        <option value="compendium">Compendium</option>
+        <option value="questBOTW">Quest BotW</option>
+        <option value="questTOTK">Quest TotK</option>
+        <option value="tip">Tip</option>
+        <option value="choice">Choice</option>
+      </select>
+      <div class="sep"></div>
+      <input id="search-box" type="text" placeholder="Search..." oninput="doSearch(this.value)" />
+    </div>
+
+    <div id="meta-panel">
+      <textarea id="meta-ta" placeholder="YAML metadata (%%% block)..."></textarea>
+    </div>
+
+    <div id="layout">
+      <aside id="sidebar"></aside>
+
+      <main id="editor-area">
+        <div id="empty-state">
+          <div class="icon">📝</div>
+          <div>Open a .yaml, .msyt, or BotW BCML texts.json file, or drop it here</div>
+          <button class="empty-add-btn" onclick="openNC()">＋ Create Entry</button>
         </div>
-        <div class="editor">
-          <div class="editor-section editor-header">
-            <div class="chain-title">
-              <h2>New Chain</h2>
-            </div>
-            <div class="chain-options">
-              <select id="bubble-type">
-                <option value="dialogue">Dialogue</option>
-                <option value="signboard">Sign</option>
-                <option value="item">Item</option>
-                <option value="compendium">Compendium</option>
-                <option value="questBOTW">Quest (BOTW)</option>
-                <option value="questTOTK">Quest (TOTK)</option>
-                <option value="tip">Tip</option>
-              </select>
-              <div id="bubble-set-animation" class="select-container"></div>
-              <div id="bubble-set-sound" class="select-container"></div>
-              <div id="bubble-add-pause" class="select-container"></div>
-            </div>
-          </div>
-          <div class="editor-section bubble-container"></div>
+        <div id="chain-list"></div>
+      </main>
+    </div>
+
+    <div id="statusbar">Ready</div>
+
+    <div id="te-modal" onclick="if(event.target===this)closeTE()">
+      <div id="te-box">
+        <h3 id="te-title">Edit Tag</h3>
+        <div id="te-fields"></div>
+        <div class="te-btns">
+          <button class="btn-del" onclick="deleteTE()">Delete</button>
+          <button onclick="closeTE()">Cancel</button>
+          <button class="btn-save" onclick="saveTE()">Save</button>
         </div>
       </div>
     </div>
+
+    <div id="tag-picker" onclick="if(event.target===this)closeTP()">
+      <div id="tp-box">
+        <input id="tp-search" placeholder="Search tag..." oninput="filterTP(this.value)" autocomplete="off" onkeydown="tpKey(event)" />
+        <div id="tp-list"></div>
+      </div>
+    </div>
+
+    <div id="raw-modal" onclick="if(event.target===this)closeRaw()">
+      <div id="raw-box">
+        <h3>Edit With Tags</h3>
+        <textarea id="raw-text" spellcheck="false"></textarea>
+        <div class="te-btns">
+          <button class="btn-save" id="raw-apply">Apply</button>
+          <button id="raw-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="ctx-menu">
+      <div class="ctx-item" id="ctx-view-raw">🔍 View With Tags</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" id="ctx-delay8">⏱ Pause 8 Frames</div>
+      <div class="ctx-item" id="ctx-delay15">⏱ Pause 15 Frames</div>
+      <div class="ctx-item" id="ctx-delay30">⏱ Pause 30 Frames</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" id="ctx-copy-tags">📋 Copy With Tags</div>
+      <div class="ctx-item" id="ctx-copy-plain">📄 Copy Without Tags</div>
+    </div>
+
     <script type="module" src="scripts/index.js"></script>
   </body>
 </html>

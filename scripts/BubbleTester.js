@@ -1,8 +1,6 @@
-import Bubble from "./Bubble.js";
+﻿import Bubble from "./Bubble.js";
 import BubbleUtil from "./BubbleUtil.js";
 import BubbleManager from "./BubbleManager.js";
-
-import TextSize from "./enums/TextSize.js";
 
 /** Manages the wrapping and formatting of text for bubbles. */
 export default class BubbleTester {
