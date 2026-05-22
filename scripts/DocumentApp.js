@@ -11,7 +11,7 @@ import {
   tagSummary,
   visibleOffsetToRaw
 } from "./RawContent.js";
-import { buildMsytBcmlJson, buildMsytYaml, parseMsytBcmlJson, parseMsytYaml } from "./MSYTFormat.js";
+import { buildMsytBcmlJson, buildMsytYaml, isTagMappedToMsyt, parseMsytBcmlJson, parseMsytYaml } from "./MSYTFormat.js";
 import { getColorChoices, getColorCss, getTags, setGcfText } from "./GcfRegistry.js";
 
 const STORAGE_GAME_KEY = "bubble_wrap_game";
@@ -106,7 +106,7 @@ function defaultEntry(mode = DOC_MODE_AEON, msytDocInfo = {}) {
   const defaultPath = msytDocInfo.defaultPath || "NewFile.msyt";
   return {
     label: "",
-    attrKey: isMsyt ? "attributes" : "attributeText",
+    attrKey: isMsyt ? "attributes" : "attribute",
     attrVal: "",
     content: "",
     bubbleType: isMsyt ? inferMsytBubbleTypeFromPath(defaultPath) : "dialogue",
@@ -154,10 +154,34 @@ function stringifyMsytMeta(meta) {
   return `${JSON.stringify(meta, null, 2)}\n`;
 }
 
+// Map AEON labelGroups to msyt group_count.
+function getAeonLabelGroups(yamlMeta) {
+  const match = String(yamlMeta || "").match(/(?:^|\n)labelGroups:\s*(-?\d+)\s*(?:\n|$)/);
+  const value = Number(match?.[1] ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+// Read group_count from msyt meta safely.
+function getMsytGroupCount(msytMeta) {
+  const value = Number(msytMeta?.group_count ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+// Build a minimal AEON meta block from msyt metadata.
+function buildAeonMetaFromMsyt(currentGame, msytMeta) {
+  return `%%%\nhasATR1: ${currentGame === "TotK" ? "false" : "true"}\nlabelGroups: ${getMsytGroupCount(msytMeta)}\n%%%\n`;
+}
+
 // Decide whether AEON export should include attributeText/attribute.
 function hasATR1(currentGame, yamlMeta) {
   if (currentGame === "TotK") return false;
   return !/hasATR1:\s*false/.test(String(yamlMeta || ""));
+}
+
+// AEON/MSYT attribute mode depends on whether any entry has non-empty attribute text.
+function getAeonAttributeKey(chains, currentDocMode) {
+  const list = Array.isArray(chains) ? chains : [];
+  return list.some((chain) => String(chain?.attrVal || "").trim() !== "") ? "attributeText" : "attribute";
 }
 
 // Measure range text after removing hidden raw-tag nodes.
@@ -736,6 +760,7 @@ export default class DocumentApp {
   syncDocModeUi() {
     const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
     const onlyBcml = this.currentDocMode === DOC_MODE_BCML;
+    const tagEnabled = this.currentDocMode === DOC_MODE_AEON || isMsyt;
     this.metaBtn.disabled = isMsyt;
     if (isMsyt) this.metaPanel.classList.remove("open");
     this.exportWrap.classList.toggle("show", this.currentGame === "BotW");
@@ -747,8 +772,8 @@ export default class DocumentApp {
     this.btnExpYaml.classList.toggle("active", this.exportMode === DOC_MODE_AEON);
     this.btnExpMsyt.classList.toggle("active", this.exportMode === DOC_MODE_MSYT);
     this.btnExpBcml.classList.toggle("active", this.exportMode === DOC_MODE_BCML);
-    this.btnTag.disabled = this.currentDocMode !== DOC_MODE_AEON;
-    this.btnTag.classList.toggle("disabled", this.currentDocMode !== DOC_MODE_AEON);
+    this.btnTag.disabled = !tagEnabled;
+    this.btnTag.classList.toggle("disabled", !tagEnabled);
     this.fileDrop.textContent = "📂 Open YAML / .msyt / texts.json";
     this.chains.forEach((chain) => this.updateChainModeUi(chain));
   }
@@ -878,14 +903,12 @@ export default class DocumentApp {
 
   // Open the GCF-driven tag picker.
   openTP() {
-    if (this.currentDocMode !== DOC_MODE_AEON) {
-      this.setStatus("GCF Tag picker is for AEON YAML");
-      return;
-    }
     const content = this.activeContent || document.activeElement?.closest?.(".bubble-content");
     if (content) this.captureTagSelection(content, false);
     this.tpList.innerHTML = "";
+    const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
     for (const tagDef of getTags(this.currentGame)) {
+      if (isMsyt && !isTagMappedToMsyt(tagDef.name, this.currentGame)) continue;
       if (tagDef.name === "color" || tagDef.name === "size" || tagDef.name === "pageBreak") continue;
       const item = document.createElement("div");
       item.className = "tp-item";
@@ -897,7 +920,7 @@ export default class DocumentApp {
       this.tpList.appendChild(item);
     }
     if (!this.tpList.childElementCount) {
-      this.setStatus("No GCF tags loaded");
+      this.setStatus(isMsyt ? "No msyt-mapped tags loaded" : "No GCF tags loaded");
       return;
     }
     this.tagPicker.classList.add("open");
@@ -1137,7 +1160,7 @@ export default class DocumentApp {
     this.msytDocInfo = {
       defaultLocale: "EUen",
       defaultPath: "NewFile.msyt",
-      msytMeta: null
+      msytMeta: { group_count: getAeonLabelGroups(doc.yamlMeta) }
     };
     if (this.yamlMeta.includes("hasATR1: true")) this.selectGame("BotW");
     else if (this.yamlMeta.includes("hasATR1: false")) this.selectGame("TotK");
@@ -1202,7 +1225,10 @@ export default class DocumentApp {
 
   // Refresh per-chain UI that depends on the current mode.
   updateChainModeUi(chain) {
-    chain.attrInput.placeholder = chain.attrKey || (this.exportMode === DOC_MODE_AEON ? "attributeText" : "attributes");
+    chain.attrInput.placeholder =
+      this.exportMode === DOC_MODE_AEON
+        ? getAeonAttributeKey(this.chains, this.currentDocMode)
+        : chain.attrKey || "attributes";
     this.updateSidebarItem(chain);
   }
 
@@ -2480,15 +2506,19 @@ export default class DocumentApp {
 
   // Build AEON YAML text from collected chains.
   buildAeonYaml(chains) {
-    const meta = this.metaTextarea.value || this.yamlMeta;
+    const meta =
+      this.currentDocMode === DOC_MODE_AEON
+        ? this.metaTextarea.value || this.yamlMeta
+        : this.yamlMeta || buildAeonMetaFromMsyt(this.currentGame, this.msytDocInfo.msytMeta);
     let output = meta ? `${meta}\n` : "";
     const includeAttribute = hasATR1(this.currentGame, meta);
+    const aeonAttrKey = getAeonAttributeKey(chains, this.currentDocMode);
     const parts = [];
     chains.forEach((chain) => {
       const entry = [];
       entry.push("---");
       entry.push(`label: ${chain.label}`);
-      if (includeAttribute) entry.push(`${chain.attrKey}: ${chain.attrVal || ""}`);
+      if (includeAttribute) entry.push(`${aeonAttrKey}: ${chain.attrVal || ""}`);
       entry.push("---");
       entry.push(chain.raw);
       parts.push(entry.join("\n"));
@@ -2506,11 +2536,30 @@ export default class DocumentApp {
 
     try {
       const mode = this.getEffectiveExportMode();
+      const aeonAttrKey = getAeonAttributeKey(chains, this.currentDocMode);
+      const exportChains =
+        this.currentDocMode === DOC_MODE_AEON && mode !== DOC_MODE_AEON
+          ? chains.map((chain) => ({
+              ...chain,
+              attrVal: aeonAttrKey === "attributeText" ? chain.attrVal : "",
+              msytHasAttributes: aeonAttrKey === "attributeText"
+            }))
+          : chains;
+      const msytDocInfo =
+        this.currentDocMode === DOC_MODE_AEON
+          ? {
+              ...this.msytDocInfo,
+              msytMeta: {
+                ...(this.msytDocInfo.msytMeta && typeof this.msytDocInfo.msytMeta === "object" ? this.msytDocInfo.msytMeta : {}),
+                group_count: getAeonLabelGroups(this.metaTextarea.value || this.yamlMeta)
+              }
+            }
+          : this.msytDocInfo;
       let output = "";
-      if (this.currentDocMode === DOC_MODE_BCML) output = buildMsytBcmlJson(chains, this.msytDocInfo, this.currentGame);
-      else if (mode === DOC_MODE_AEON) output = this.buildAeonYaml(chains);
-      else if (mode === DOC_MODE_MSYT) output = buildMsytYaml(chains, this.msytDocInfo, this.currentGame);
-      else output = buildMsytBcmlJson(chains, this.msytDocInfo, this.currentGame);
+      if (this.currentDocMode === DOC_MODE_BCML) output = buildMsytBcmlJson(exportChains, msytDocInfo, this.currentGame);
+      else if (mode === DOC_MODE_AEON) output = this.buildAeonYaml(exportChains);
+      else if (mode === DOC_MODE_MSYT) output = buildMsytYaml(exportChains, msytDocInfo, this.currentGame);
+      else output = buildMsytBcmlJson(exportChains, msytDocInfo, this.currentGame);
 
       const label = this.currentDocMode === DOC_MODE_BCML ? "texts.json" : mode === DOC_MODE_MSYT ? ".msyt" : "YAML";
       navigator.clipboard.writeText(output).then(

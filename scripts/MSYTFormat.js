@@ -1,5 +1,25 @@
 import { getColorNameById } from "./GcfRegistry.js";
 
+const BOTW_MSYT_GCF_TAG_NAMES = new Set([
+  "color",
+  "pageBreak",
+  "choice2",
+  "choice3",
+  "choice4",
+  "singleChoice",
+  "icon",
+  "size",
+  "animation",
+  "font",
+  "setEmotion",
+  "setEmotion2",
+  "autoAdvance",
+  "delay8",
+  "delay15",
+  "delay30",
+  "delay"
+]);
+
 const BOTW_ICON_ID_TO_NAME = {
   0: "LStickUp",
   1: "LStickDown",
@@ -79,6 +99,11 @@ const MSYT_COLOR_TO_EDITOR = {
 };
 
 const EDITOR_COLOR_TO_MSYT = Object.fromEntries(Object.entries(MSYT_COLOR_TO_EDITOR).map(([key, value]) => [value.toLowerCase(), key]));
+
+export function isTagMappedToMsyt(name, game = "BotW") {
+  if (game !== "BotW") return false;
+  return BOTW_MSYT_GCF_TAG_NAMES.has(String(name || ""));
+}
 
 function normalizeNewlines(text) {
   return String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
