@@ -181,6 +181,17 @@ textarea {
   padding: 4px 6px;
   font-size: 12px;
   cursor: pointer;
+  background: #f5f2ef;
+  color: #1a1a1a;
+  border: 1px solid #c8c4be;
+}
+
+#global-type-select:hover,
+#global-type-select:focus,
+#global-type-select:focus-visible,
+#global-type-select:active {
+  background: #e8e4df;
+  color: #1a1a1a;
 }
 
 .tbtn.disabled {
