@@ -253,7 +253,7 @@ function msytControlToRaw(control) {
     const editorName = msytColorToEditorName(control.colour);
     if (editorName) return buildTagStr("color", { id: editorName });
   }
-  if (kind === "reset_colour") return buildTagStr("color", { id: "Reset" });
+  if (kind === "reset_colour") return buildTagStr("color", { id: "Default" });
   if (kind === "choice" && Array.isArray(control.choice_labels)) {
     const labels = control.choice_labels.map((value) => String(value));
     const tagName = msytChoiceTagName(labels);
@@ -606,7 +606,7 @@ function tryParseMsytControlFromRaw(rawTag) {
   if (name === "msyt" && args.json) return JSON.parse(base64ToUtf8(args.json));
   if (name === "color") {
     const id = args.id || "-1";
-    if (id === "Reset" || id === "-1") return { kind: "reset_colour" };
+    if (id === "Default" || id === "-1") return { kind: "reset_colour" };
     const editorName = getColorNameById("BotW", id);
     const colour = editorColorToMsyt(editorName);
     if (colour) return { kind: "set_colour", colour };

@@ -55,6 +55,7 @@ msbt:
       description: id of the color
       dataType: s16
       valueMap:
+        -1: Default
         0: Red
         1: Green # LightGreen1 in msyt
         2: Cyan # Blue
@@ -62,7 +63,6 @@ msbt:
         4: Azure # LightGreen4
         5: Orange
         6: DullGold # LightGrey
-        -1: Reset
   - name: pageBreak
     description: forces a new dialog page
     group: 0

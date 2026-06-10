@@ -247,7 +247,7 @@ export function renderRawToContent(contentEl, raw) {
     lastIndex = match.index + match[0].length;
     const { name, args } = parseTagBody(match[1]);
     if (name === "color") {
-      const id = args.id ?? "Reset";
+      const id = args.id ?? "Default";
       state.colorId = normalizeColorId(id);
       continue;
     }
@@ -313,7 +313,7 @@ function collectSerializedPieces(node, pieces, inheritedState = { colorId: null,
 
 function syncSerializedState(output, state, nextColorId, nextSizeValue) {
   if (state.colorId !== nextColorId) {
-    output.push(`{{color id="${nextColorId ?? "Reset"}"}}`);
+    output.push(`{{color id="${nextColorId ?? "Default"}"}}`);
     state.colorId = nextColorId ?? null;
   }
   if (state.sizeValue !== nextSizeValue) {

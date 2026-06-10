@@ -776,23 +776,13 @@ body[data-game="BotW"] .bubble-content [data-color="Grey"] { color: #aaaaaa; }
 body[data-game="BotW"] .bubble-content [data-color="Azure"] { color: #66bbff; }
 body[data-game="BotW"] .bubble-content [data-color="Orange"] { color: #ffaa44; }
 body[data-game="BotW"] .bubble-content [data-color="DullGold"] { color: #ccaa44; }
-body[data-game="BotW"] .bubble-content [data-color="Blue"] { color: #6699ff; }
-body[data-game="BotW"] .bubble-content [data-color="Yellow"] { color: #ffcc44; }
-body[data-game="BotW"] .bubble-content [data-color="White"] { color: #f0ece4; }
-body[data-game="BotW"] .bubble-content [data-color="DarkRed"] { color: #a31401; }
-body[data-game="BotW"] .bubble-content [data-color="Magenta"] { color: #ff00fe; }
-body[data-game="TotK"] .bubble-content [data-color="Red"] { color: #ff2209; }
-body[data-game="TotK"] .bubble-content [data-color="Green"] { color: #5b996d; }
+
+body[data-game="TotK"] .bubble-content [data-color="Orange"] { color: #ff2209; }
 body[data-game="TotK"] .bubble-content [data-color="Cyan"] { color: #00ffff; }
-body[data-game="TotK"] .bubble-content [data-color="Grey"] { color: rgba(255, 255, 255, 0.25); }
-body[data-game="TotK"] .bubble-content [data-color="Azure"] { color: #66bbff; }
-body[data-game="TotK"] .bubble-content [data-color="Orange"] { color: #ffaa44; }
-body[data-game="TotK"] .bubble-content [data-color="DullGold"] { color: #ccaa44; }
-body[data-game="TotK"] .bubble-content [data-color="Blue"] { color: #6699ff; }
-body[data-game="TotK"] .bubble-content [data-color="Yellow"] { color: #ffcc44; }
-body[data-game="TotK"] .bubble-content [data-color="White"] { color: #f0ece4; }
-body[data-game="TotK"] .bubble-content [data-color="DarkRed"] { color: #a31401; }
-body[data-game="TotK"] .bubble-content [data-color="Magenta"] { color: #ff00fe; }
+body[data-game="TotK"] .bubble-content [data-color="Gray"] { color: rgba(255, 255, 255, 0.25); }
+body[data-game="TotK"] .bubble-content [data-color="Red"] { color: #a31401; }
+body[data-game="TotK"] .bubble-content [data-color="Green"] { color: #5b996d; }
+body[data-game="TotK"] .bubble-content [data-color="Purple"] { color: #ff00fe; }
 
 .bubble-content [data-size="80"] {
   font-size: 0.8em;

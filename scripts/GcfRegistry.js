@@ -10,16 +10,16 @@ export const COLOR_CSS = {
     Blue: "#6699ff",
     Yellow: "#ffcc44",
     White: "#f0ece4",
-    Reset: null
+    Default: null
   },
   TotK: {
-    Red: "#ff2209",
+    Orange: "#ff2209",
     Cyan: "#00ffff",
-    Grey: "rgba(255,255,255,0.25)",
-    DarkRed: "#a31401",
+    Gray: "rgba(255,255,255,0.25)",
+    Red: "#a31401",
     Green: "#5b996d",
-    Magenta: "#ff00fe",
-    Reset: null
+    Purple: "#ff00fe",
+    Default: null
   }
 };
 
@@ -51,7 +51,7 @@ export function getColorValueMap(game) {
 }
 
 export function getColorChoices(game) {
-  return Object.values(getColorValueMap(game)).filter((name) => name && name !== "Reset");
+  return Object.values(getColorValueMap(game)).filter((name) => name && name !== "Default");
 }
 
 export function getColorNameById(game, id) {
@@ -60,25 +60,25 @@ export function getColorNameById(game, id) {
 }
 
 export function resolveEditorColorName(game, idOrName) {
-  const raw = String(idOrName || "Reset").trim();
+  const raw = String(idOrName || "Default").trim();
   const key = raw.toLowerCase();
-  if (["reset", "-1", "65535", "default"].includes(key)) return null;
+  if (key === "default" || key === "-1" || key === "65535") return null;
 
   const currentMap = getColorValueMap(game);
-  if (currentMap[raw] != null && currentMap[raw] !== "Reset") return currentMap[raw];
+  if (currentMap[raw] != null && currentMap[raw] !== "Default") return currentMap[raw];
 
   for (const otherGame of ["BotW", "TotK"]) {
     const map = getColorValueMap(otherGame);
-    if (map[raw] != null && map[raw] !== "Reset") return map[raw];
+    if (map[raw] != null && map[raw] !== "Default") return map[raw];
   }
 
   const currentPalette = getColorCss(game);
   const currentDirect = Object.keys(currentPalette).find((name) => name.toLowerCase() === key);
-  if (currentDirect && currentDirect !== "Reset") return currentDirect;
+  if (currentDirect && currentDirect !== "Default") return currentDirect;
 
   for (const palette of Object.values(COLOR_CSS)) {
     const direct = Object.keys(palette).find((name) => name.toLowerCase() === key);
-    if (direct && direct !== "Reset") return direct;
+    if (direct && direct !== "Default") return direct;
   }
   return null;
 }

@@ -1,4 +1,4 @@
-﻿import BubbleType from "./enums/BubbleType.js";
+import BubbleType from "./enums/BubbleType.js";
 import {
   contentToPlainText,
   ensureEditableStructure,
@@ -313,7 +313,7 @@ function getBoundaryTag(raw, offset, dir) {
 // Ignore reset-format tags in destructive delete logic.
 function isProtectedDeleteTag(tag) {
   if (!tag) return false;
-  if (tag.name === "color") return tag.args.id === "Reset" || tag.args.id === "-1";
+  if (tag.name === "color") return tag.args.id === "Default" || tag.args.id === "-1";
   if (tag.name === "size") return tag.args.value === "100";
   return false;
 }
@@ -367,10 +367,10 @@ const FORMAT_DEFS = {
     tagName: "color",
     extract: (inner) => {
       const match = inner.match(/id="([^"]*)"/);
-      return match ? match[1] : "Reset";
+      return match ? match[1] : "Default";
     },
-    isReset: (value) => value === "Reset" || value === "-1",
-    emitTag: (value) => (value == null ? '{{color id="Reset"}}' : `{{color id="${value}"}}`)
+    isReset: (value) => value === "Default" || value === "-1",
+    emitTag: (value) => (value == null ? '{{color id="Default"}}' : `{{color id="${value}"}}`)
   },
   size: {
     tagName: "size",
@@ -429,7 +429,7 @@ function stripEmptyFormatPairs(raw) {
   while (next !== prev) {
     prev = next;
     next = next
-      .replace(/\{\{color\b[^}]*\}\}\{\{color id="Reset"\}\}/g, "")
+      .replace(/\{\{color\b[^}]*\}\}\{\{color id="Default"\}\}/g, "")
       .replace(/\{\{size\b[^}]*\}\}\{\{size value="100"\}\}/g, "");
   }
   return next;
@@ -833,7 +833,7 @@ export default class DocumentApp {
     popup.innerHTML = "";
     const palette = getColorCss(this.currentGame);
     getColorChoices(this.currentGame).forEach((name) => {
-      if (name === "Reset") return;
+      if (name === "Default") return;
       const value = palette[name];
       if (!value) return;
       const button = document.createElement("button");
@@ -852,7 +852,7 @@ export default class DocumentApp {
     reset.className = "fmt-btn";
     reset.type = "button";
     reset.innerHTML = '<span class="fmt-reset">✕</span>';
-    reset.title = "Reset color";
+    reset.title = "Default color";
     reset.onmousedown = (event) => {
       event.preventDefault();
       this.applyFormat("color", null);
