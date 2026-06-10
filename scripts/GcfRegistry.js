@@ -101,12 +101,17 @@ export function parseGcfTags(text) {
   let currentTag = null;
   let currentArg = null;
   let inValueMap = false;
+  let tagIndent = null;
+  let argIndent = null;
+  let valueMapIndent = null;
 
   const flushArg = () => {
     if (!currentArg || !currentTag) return;
     currentTag.args.push(currentArg);
     currentArg = null;
+    argIndent = null;
     inValueMap = false;
+    valueMapIndent = null;
   };
 
   const flushTag = () => {
@@ -114,6 +119,7 @@ export function parseGcfTags(text) {
     if (!currentTag) return;
     tags.push(currentTag);
     currentTag = null;
+    tagIndent = null;
   };
 
   for (const line of lines) {
@@ -126,46 +132,50 @@ export function parseGcfTags(text) {
       continue;
     }
 
-    if (/^  - name:\s+/.test(line)) {
-      flushTag();
-      currentTag = { name: line.replace(/^  - name:\s+/, "").trim(), description: "", args: [] };
+    const nameMatch = line.match(/^(\s*)- name:\s+(.*)$/);
+    if (nameMatch) {
+      const indent = nameMatch[1].length;
+      const name = nameMatch[2].trim();
+      if (!currentTag || tagIndent == null || indent <= tagIndent) {
+        flushTag();
+        currentTag = { name, description: "", args: [] };
+        tagIndent = indent;
+      } else {
+        flushArg();
+        currentArg = { name, description: "", valueMap: {} };
+        argIndent = indent;
+      }
       continue;
     }
 
     if (!currentTag) continue;
 
-    const tagDescription = line.match(/^    description:\s*(.*)$/);
-    if (tagDescription && !currentArg) {
-      currentTag.description = tagDescription[1].trim();
-      continue;
-    }
-
-    if (/^    - name:\s+/.test(line)) {
-      flushArg();
-      currentArg = { name: line.replace(/^    - name:\s+/, "").trim(), description: "", valueMap: {} };
-      continue;
-    }
-
-    if (!currentArg) continue;
-
-    const argDescription = line.match(/^      description:\s*(.*)$/);
-    if (argDescription) {
-      currentArg.description = argDescription[1].trim();
-      continue;
-    }
-
-    if (/^\s*valueMap:\s*$/.test(line)) {
-      inValueMap = true;
-      continue;
-    }
-
     if (inValueMap) {
-      const match = line.match(/^\s{8}(-?\d+):\s*([A-Za-z0-9_]+)/);
-      if (match) {
-        currentArg.valueMap[match[1]] = match[2];
+      const valueMatch = line.match(/^(\s*)(-?\d+):\s*([A-Za-z0-9_]+)/);
+      if (valueMatch && valueMatch[1].length > valueMapIndent) {
+        currentArg.valueMap[valueMatch[2]] = valueMatch[3];
         continue;
       }
-      if (!/^\s{8}/.test(line)) inValueMap = false;
+      if (line.trim() && line.match(/^(\s*)/)?.[1].length <= valueMapIndent) {
+        inValueMap = false;
+        valueMapIndent = null;
+      }
+    }
+
+    const descriptionMatch = line.match(/^(\s*)description:\s*(.*)$/);
+    if (descriptionMatch) {
+      const indent = descriptionMatch[1].length;
+      if (currentArg && argIndent != null && indent > argIndent) currentArg.description = descriptionMatch[2].trim();
+      else if (!currentArg && tagIndent != null && indent > tagIndent) currentTag.description = descriptionMatch[2].trim();
+      continue;
+    }
+
+    if (currentArg) {
+      const valueMapMatch = line.match(/^(\s*)valueMap:\s*$/);
+      if (valueMapMatch && argIndent != null && valueMapMatch[1].length > argIndent) {
+        inValueMap = true;
+        valueMapIndent = valueMapMatch[1].length;
+      }
     }
   }
 
