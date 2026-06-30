@@ -1081,7 +1081,9 @@ export default class DocumentApp {
         if (!response.ok) continue;
         const text = await response.text();
         setGcfText(game, text);
-      } catch {}
+      } catch (error) {
+        this.setStatus(`Could not load ${game}.gcf: ${error.message}`);
+      }
     }
     this.syncGameUi();
   }
