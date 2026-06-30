@@ -2126,10 +2126,24 @@ export default class DocumentApp {
     return path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/");
   }
 
+  // Return the line cap for the chain's current bubble type.
+  getBubbleLineLimit(chain) {
+    const type = chain?.typeSelect?.value || "dialogue";
+    return BubbleType[type]?.lineCount ?? 3;
+  }
+
+  // Decide whether an AEON soft split may stay as plain text.
+  canAeonSoftSplitStayText(chain, previousBubble) {
+    if (!previousBubble) return false;
+    const previousRaw = previousBubble.content.dataset.raw ?? serializeContent(previousBubble.content);
+    return previousRaw.split("\n").length === this.getBubbleLineLimit(chain);
+  }
+
   // Decide whether an MSYT split may stay as a newline.
-  canMsytSoftSplitStayText(chain) {
+  canMsytSoftSplitStayText(chain, mergedPageRaw) {
     const path = String(chain.msytPath || this.msytDocInfo.defaultPath || "");
-    return path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/");
+    if (!(path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/"))) return false;
+    return String(mergedPageRaw || "").split("\n").length > this.getBubbleLineLimit(chain);
   }
 
   // Split oversized bubble text into following bubbles.
@@ -2137,14 +2151,14 @@ export default class DocumentApp {
     if (!this.autoSplit || !this.canAutoSplitChain(bubbleRecord.chain)) return;
     const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
     const lines = raw.split("\n");
-    if (lines.length <= 3) return;
-    const keepRaw = lines.slice(0, 3).join("\n");
-    const overflowRaw = lines.slice(3).join("\n");
+    const limit = this.getBubbleLineLimit(bubbleRecord.chain);
+    if (lines.length <= limit) return;
+    const keepRaw = lines.slice(0, limit).join("\n");
+    const overflowRaw = lines.slice(limit).join("\n");
     renderRawToContent(bubbleRecord.content, keepRaw);
     bubbleRecord.content.dataset.raw = keepRaw;
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
-    const joinKind = this.currentDocMode === DOC_MODE_AEON && keepRaw.endsWith("\n\n") ? "pageBreak" : "newline";
-    const newBubble = this.addBubble(bubbleRecord.chain, overflowRaw, bubbleRecord, joinKind);
+    const newBubble = this.addBubble(bubbleRecord.chain, overflowRaw, bubbleRecord, "softBreak");
     if (newBubble) this.autoSplitBubble(newBubble);
   }
 
@@ -2424,37 +2438,43 @@ export default class DocumentApp {
   serializeBubbleChain(chain, pickBoundary) {
     let raw = "";
     let pageRaw = "";
+    let previousBubble = null;
     chain.bubbles.forEach((bubble, index) => {
       const bubbleRaw = bubble.content.dataset.raw ?? serializeContent(bubble.content);
       if (index === 0) {
         raw += bubbleRaw;
         pageRaw = bubbleRaw;
+        previousBubble = bubble;
         return;
       }
 
-      const boundary = pickBoundary(chain, bubble, pageRaw, bubbleRaw);
+      const boundary = pickBoundary(chain, previousBubble, bubble, pageRaw, bubbleRaw);
       raw += boundary.separator;
       raw += bubbleRaw;
       pageRaw = boundary.nextPageRaw;
+      previousBubble = bubble;
     });
     return raw;
   }
 
   // Decide how AEON should join the next bubble into the current raw text.
-  pickAeonBoundary(_chain, bubble, pageRaw, bubbleRaw) {
+  pickAeonBoundary(chain, previousBubble, bubble, pageRaw, bubbleRaw) {
     const mergedPageRaw = `${pageRaw}\n${bubbleRaw}`;
-    if (bubble.joinKind === "pageBreak") {
-      if (pageRaw.endsWith("\n\n")) return { separator: "\n", nextPageRaw: mergedPageRaw };
+    if (bubble.joinKind === "pageBreak") return { separator: "{{pageBreak}}", nextPageRaw: bubbleRaw };
+    if (bubble.joinKind === "softBreak") {
+      if (this.canAeonSoftSplitStayText(chain, previousBubble)) {
+        return { separator: "\n", nextPageRaw: mergedPageRaw };
+      }
       return { separator: "{{pageBreak}}", nextPageRaw: bubbleRaw };
     }
     return { separator: "\n", nextPageRaw: mergedPageRaw };
   }
 
   // Decide how MSYT should join the next bubble into the current raw text.
-  pickMsytBoundary(chain, bubble, pageRaw, bubbleRaw) {
+  pickMsytBoundary(chain, _previousBubble, bubble, pageRaw, bubbleRaw) {
     const mergedPageRaw = `${pageRaw}\n${bubbleRaw}`;
     if (bubble.joinKind === "pageBreak") return { separator: "{{pageBreak}}", nextPageRaw: bubbleRaw };
-    if (this.canMsytSoftSplitStayText(chain) && mergedPageRaw.split("\n").length > 3) {
+    if (this.canMsytSoftSplitStayText(chain, mergedPageRaw)) {
       return { separator: "\n", nextPageRaw: mergedPageRaw };
     }
     return { separator: "{{pageBreak}}", nextPageRaw: bubbleRaw };
