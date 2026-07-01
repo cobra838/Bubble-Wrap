@@ -740,8 +740,10 @@ textarea {
 }
 
 .bubble.dialogue .bubble-content,
-.bubble[data-type="dialogue"] .bubble-content {
-  text-align: center;
+.bubble.signboard .bubble-content,
+.bubble[data-type="dialogue"] .bubble-content,
+.bubble[data-type="signboard"] .bubble-content {
+  text-align: left;
 }
 
 .bubble-content:focus {
