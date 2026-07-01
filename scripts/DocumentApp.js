@@ -985,9 +985,7 @@ export default class DocumentApp {
       item.innerHTML = `<span class="tp-name">${escapeHtml(tagDef.name)}</span><span class="tp-desc">${escapeHtml(
         tagDef.description || ""
       )}</span>`;
-      item.addEventListener("mousedown", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
+      item.addEventListener("click", () => {
         this.insertFromTP(tagDef, openId);
       });
       this.tpList.appendChild(item);
