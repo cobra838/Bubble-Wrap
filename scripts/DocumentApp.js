@@ -535,20 +535,70 @@ function capturePendingInputEdit(content, inputType) {
     content._pendingInputEdit = null;
     return;
   }
+  const isTagNode = (node) => node?.nodeType === Node.ELEMENT_NODE && node.dataset?.rawTag != null;
+  const edgeLeaf = (node, dir) => {
+    let current = node;
+    while (current?.nodeType === Node.ELEMENT_NODE && current.childNodes.length) {
+      current = dir < 0 ? current.lastChild : current.firstChild;
+    }
+    return current;
+  };
+  const boundaryNeighbor = (node, offset, dir) => {
+    if (!node) return null;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const len = node.textContent?.length || 0;
+      if ((dir < 0 && offset > 0) || (dir > 0 && offset < len)) return null;
+      const sibling = dir < 0 ? node.previousSibling : node.nextSibling;
+      if (sibling) return edgeLeaf(sibling, dir);
+      const parent = node.parentNode;
+      if (!parent) return null;
+      const index = Array.prototype.indexOf.call(parent.childNodes, node);
+      if (index < 0) return null;
+      return boundaryNeighbor(parent, dir < 0 ? index : index + 1, dir);
+    }
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const kids = node.childNodes;
+      if (dir < 0 && offset > 0) return edgeLeaf(kids[offset - 1], dir);
+      if (dir > 0 && offset < kids.length) return edgeLeaf(kids[offset], dir);
+      if (node === content) return null;
+      const parent = node.parentNode;
+      if (!parent) return null;
+      const index = Array.prototype.indexOf.call(parent.childNodes, node);
+      if (index < 0) return null;
+      return boundaryNeighbor(parent, dir < 0 ? index : index + 1, dir);
+    }
+    return null;
+  };
   const { startOff, endOff } = getSelectionTextOffsets(content, range);
   let start = startOff;
   let end = endOff;
-  const plain = rawToPlainText(content.dataset.raw ?? "");
+  const raw = content.dataset.raw ?? "";
+  const plain = rawToPlainText(raw);
+  let rawStart = visibleOffsetToRaw(raw, startOff, "after");
+  let rawEnd = visibleOffsetToRaw(raw, endOff, "before");
+  let collapsedBias = null;
   if (startOff === endOff) {
+    const beforeNode = boundaryNeighbor(range.startContainer, range.startOffset, -1);
+    const afterNode = boundaryNeighbor(range.startContainer, range.startOffset, 1);
+    if (isTagNode(beforeNode) && !isTagNode(afterNode)) collapsedBias = "after";
+    else if (isTagNode(afterNode) && !isTagNode(beforeNode)) collapsedBias = "before";
+    else collapsedBias = content._nextInputCollapsedBias || "after";
     if (inputType === "deleteContentBackward" && startOff > 0) {
       start = startOff - 1;
       end = startOff;
+      rawStart = visibleOffsetToRaw(raw, start, "after");
+      rawEnd = visibleOffsetToRaw(raw, end, "before");
     } else if (inputType === "deleteContentForward") {
       start = startOff;
       end = Math.min(startOff + 1, plain.length);
+      rawStart = visibleOffsetToRaw(raw, start, "after");
+      rawEnd = visibleOffsetToRaw(raw, end, "before");
+    } else {
+      rawStart = visibleOffsetToRaw(raw, startOff, collapsedBias);
+      rawEnd = rawStart;
     }
   }
-  content._pendingInputEdit = { inputType, start, end };
+  content._pendingInputEdit = { inputType, start, end, rawStart, rawEnd, collapsedBias };
 }
 
 const _undoStacks = new WeakMap();
@@ -594,6 +644,7 @@ export default class DocumentApp {
     this.ctxTarget = null;
     this.ctxSelection = null;
     this.tagSelection = null;
+    this.tagPickerOpenId = 0;
     this.surfaceDragSelection = null;
     this.activeContent = null;
     this.autoSplit = localStorage.getItem("msbt_autosplit") !== "0";
@@ -906,6 +957,8 @@ export default class DocumentApp {
     const content = this.activeContent || document.activeElement?.closest?.(".bubble-content");
     if (content) this.captureTagSelection(content, false);
     this.tpList.innerHTML = "";
+    this.tagPickerOpenId += 1;
+    const openId = this.tagPickerOpenId;
     const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
     for (const tagDef of getTags(this.currentGame)) {
       if (isMsyt && !isTagMappedToMsyt(tagDef.name, this.currentGame)) continue;
@@ -913,10 +966,16 @@ export default class DocumentApp {
       const item = document.createElement("div");
       item.className = "tp-item";
       item.dataset.n = String(tagDef.name || "").toLowerCase();
+      item._tagDef = tagDef;
+      item._openId = openId;
       item.innerHTML = `<span class="tp-name">${escapeHtml(tagDef.name)}</span><span class="tp-desc">${escapeHtml(
         tagDef.description || ""
       )}</span>`;
-      item.addEventListener("click", () => this.insertFromTP(tagDef));
+      item.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.insertFromTP(tagDef, openId);
+      });
       this.tpList.appendChild(item);
     }
     if (!this.tpList.childElementCount) {
@@ -978,7 +1037,7 @@ export default class DocumentApp {
     } else if (event.key === "Enter") {
       event.preventDefault();
       const active = items[this.tpHiIdx()];
-      if (active) active.click();
+      if (active?._tagDef) this.insertFromTP(active._tagDef, active._openId);
     } else if (event.key === "Escape") {
       event.preventDefault();
       this.closeTP();
@@ -986,7 +1045,9 @@ export default class DocumentApp {
   }
 
   // Insert the chosen GCF tag into the saved bubble selection.
-  insertFromTP(tagDef) {
+  insertFromTP(tagDef, openId = this.tagPickerOpenId) {
+    if (openId !== this.tagPickerOpenId) return;
+    this.tagPickerOpenId += 1;
     this.closeTP();
     const saved = this.tagSelection;
     const content = saved?.content || this.activeContent;
@@ -1918,8 +1979,8 @@ export default class DocumentApp {
     });
     content.addEventListener("blur", () => {
       ensureEditableStructure(content);
-      this.syncBubbleState(bubbleRecord);
-      renderRawToContent(content, content.dataset.raw ?? "");
+      content._pendingInputEdit = null;
+      renderRawToContent(content, content.dataset.raw ?? serializeContent(content));
       fmtPopup.classList.remove("show");
     });
     content.addEventListener("input", () => {
@@ -1957,7 +2018,24 @@ export default class DocumentApp {
     event.preventDefault();
     const text = event.clipboardData?.getData("text/plain") ?? event.dataTransfer?.getData("text/plain") ?? "";
     if (!text) return;
-    document.execCommand("insertText", false, text);
+    const content = event.currentTarget;
+    if (!content?.classList?.contains("bubble-content")) return;
+    const bubbleRecord = this.findBubbleByContent(content);
+    if (!bubbleRecord) return;
+    if (event.type === "drop") {
+      this.placeCaretFromPoint(content, event.clientX, event.clientY);
+    }
+    capturePendingInputEdit(content, "insertFromPaste");
+    const pendingEdit = content._pendingInputEdit || null;
+    if (!pendingEdit) return;
+    const raw = content.dataset.raw ?? serializeContent(content);
+    const start = pendingEdit.start;
+    const editRawStart = pendingEdit.rawStart;
+    const editRawEnd = pendingEdit.rawEnd;
+    saveUndo(content);
+    content._pendingInputEdit = null;
+    const nextRaw = `${raw.slice(0, editRawStart)}${text}${raw.slice(editRawEnd)}`;
+    this.applyContentRawEdit(bubbleRecord, nextRaw, start + text.length);
   }
 
   // Apply a raw edit and refresh all dependent bubble UI.
@@ -2224,7 +2302,10 @@ export default class DocumentApp {
     if (!this.rawTarget) return;
     saveUndo(this.rawTarget.content);
     renderRawToContent(this.rawTarget.content, this.rawTextarea.value);
-    this.syncBubbleState(this.rawTarget);
+    this.rawTarget.content.dataset.raw = this.rawTextarea.value;
+    this.syncMetaBar(this.rawTarget);
+    this.refreshChoicePills(this.rawTarget.chain);
+    this.updateBubbleOverflow(this.rawTarget, this.rawTarget.chain.typeSelect.value);
     this.closeRaw();
     this.setStatus("Raw applied");
   }
@@ -2308,7 +2389,10 @@ export default class DocumentApp {
 
     const nextRaw = `${raw.slice(0, targetTag.start)}${newRawTag}${raw.slice(targetTag.end)}`;
     renderRawToContent(bubbleRecord.content, nextRaw);
-    this.syncBubbleState(bubbleRecord);
+    bubbleRecord.content.dataset.raw = nextRaw;
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(bubbleRecord.chain);
+    this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
     this.closeTE();
     this.setStatus("Tag saved");
   }
@@ -2325,7 +2409,10 @@ export default class DocumentApp {
 
     const nextRaw = `${raw.slice(0, targetTag.start)}${raw.slice(targetTag.end)}`;
     renderRawToContent(bubbleRecord.content, nextRaw);
-    this.syncBubbleState(bubbleRecord);
+    bubbleRecord.content.dataset.raw = nextRaw;
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(bubbleRecord.chain);
+    this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
     this.closeTE();
     this.setStatus("Tag deleted");
   }
