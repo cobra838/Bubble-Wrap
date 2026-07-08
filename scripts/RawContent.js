@@ -236,6 +236,9 @@ export function renderRawToContent(contentEl, raw) {
     for (let i = 0; i < parts.length; i++) {
       appendTextWithState(line, parts[i], state);
       if (i !== parts.length - 1) {
+        if (!line.childNodes.length) {
+          line.appendChild(document.createElement("br"));
+        }
         fragment.appendChild(line);
         line = document.createElement("div");
       }
@@ -260,6 +263,9 @@ export function renderRawToContent(contentEl, raw) {
   }
 
   pushText(value.slice(lastIndex));
+  if (!line.childNodes.length && value !== "") {
+    line.appendChild(document.createElement("br"));
+  }
   fragment.appendChild(line);
 
   contentEl.replaceChildren(...fragment.childNodes);
@@ -360,6 +366,9 @@ export function ensureEditableStructure(contentEl) {
     const line = document.createElement("div");
     line.appendChild(document.createTextNode(contentEl.textContent || ""));
     contentEl.replaceChildren(line);
+    if (!line.childNodes.length && line.textContent !== "") {
+      line.appendChild(document.createElement("br"));
+    }
     return;
   }
   for (const child of Array.from(contentEl.childNodes)) {
@@ -367,6 +376,9 @@ export function ensureEditableStructure(contentEl) {
       const line = document.createElement("div");
       line.appendChild(document.createTextNode(child.textContent || ""));
       contentEl.replaceChild(line, child);
+      if (!line.childNodes.length) {
+        line.appendChild(document.createElement("br"));
+      }
     }
   }
 }

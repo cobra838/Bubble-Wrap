@@ -198,7 +198,7 @@ function getVisibleTextLength(node) {
   if (node.nodeType !== Node.ELEMENT_NODE) return 0;
   if (node.classList?.contains("line-tail-marker")) return 0;
   if (node.dataset?.rawTag !== undefined) return 0;
-  if (node.tagName === "BR") return 1;
+  if (node.tagName === "BR") return 0;
   let total = 0;
   for (const child of node.childNodes) total += getVisibleTextLength(child);
   return total;
@@ -222,7 +222,7 @@ function getVisibleOffsetWithinNode(node, targetNode, targetOffset) {
           return;
         }
         if (current.tagName === "BR") {
-          total += Math.min(targetOffset, 1);
+          found = true;
         } else {
           for (let i = 0; i < Math.min(targetOffset, current.childNodes.length); i++) {
             total += getVisibleTextLength(current.childNodes[i]);
@@ -241,7 +241,6 @@ function getVisibleOffsetWithinNode(node, targetNode, targetOffset) {
     if (current.classList?.contains("line-tail-marker")) return;
     if (current.dataset?.rawTag !== undefined) return;
     if (current.tagName === "BR") {
-      total += 1;
       return;
     }
 
