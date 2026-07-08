@@ -722,10 +722,10 @@ textarea {
 
 .bubble.choice,
 .bubble[data-type="choice"] {
-  width: 360px;
-  min-height: 44px;
-  height: auto;
-  border-radius: 6px;
+  width: calc(410px * 2 / 3);
+  min-height: calc(74px * 2 / 3);
+  height: calc(74px * 2 / 3);
+  border-radius: calc(74px / 3);
   background: rgba(20, 40, 80, 0.55);
 }
 
@@ -1029,11 +1029,6 @@ body[data-game="TotK"] .bubble-content [data-color="Purple"] { color: #ff00fe; }
   max-width: 508px;
 }
 
-.bubble.choice,
-.bubble[data-type="choice"] {
-  max-width: 360px;
-}
-
 .bubble.item .bubble-content,
 .bubble.questBOTW .bubble-content,
 .bubble.questTOTK .bubble-content,
@@ -1064,12 +1059,12 @@ body[data-game="TotK"] .bubble-content [data-color="Purple"] { color: #ff00fe; }
 
 .bubble.choice .bubble-content,
 .bubble[data-type="choice"] .bubble-content {
-  width: 310px;
-  min-width: 310px;
-  max-width: 310px;
-  padding: 0.7em 1.25em;
-  align-self: center;
+  width: 100%;
+  padding-left: calc(33px * 2 / 3);
+  padding-right: 0;
   text-align: left;
+  min-width: 0;
+  font-weight: bold;
 }
 
 #statusbar {
