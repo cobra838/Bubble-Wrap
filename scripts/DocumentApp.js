@@ -2336,6 +2336,8 @@ export default class DocumentApp {
     const overflowRaw = lines.slice(limit).join("\n");
     renderRawToContent(bubbleRecord.content, keepRaw);
     bubbleRecord.content.dataset.raw = keepRaw;
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(bubbleRecord.chain);
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
     const newBubble = this.addBubble(bubbleRecord.chain, overflowRaw, bubbleRecord, "softBreak");
     if (newBubble) this.autoSplitBubble(newBubble);
