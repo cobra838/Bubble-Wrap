@@ -458,8 +458,8 @@ function msytControlToRaw(control) {
   if (kind === "auto_advance" && Number.isFinite(control.frames)) {
     const frames = Number(control.frames) >>> 0;
     return buildTagStr("autoAdvance", {
-      framesLo: String(frames & 0xffff),
-      framesHi: String((frames >>> 16) & 0xffff)
+      framesLo: String((frames >>> 16) & 0xffff),
+      framesHi: String(frames & 0xffff)
     });
   }
   if (kind === "pause") {
@@ -471,8 +471,8 @@ function msytControlToRaw(control) {
     if (Number.isFinite(control.frames)) {
       const frames = Number(control.frames) >>> 0;
       return buildTagStr("delay", {
-        framesLo: String(frames & 0xffff),
-        framesHi: String((frames >>> 16) & 0xffff)
+        framesLo: String((frames >>> 16) & 0xffff),
+        framesHi: String(frames & 0xffff)
       });
     }
   }
@@ -1076,7 +1076,7 @@ function tryParseMsytControlFromRaw(rawTag) {
   if (name === "autoAdvance") {
     const lo = Number(args.framesLo || 0) & 0xffff;
     const hi = Number(args.framesHi || 0) & 0xffff;
-    return { kind: "auto_advance", frames: ((hi << 16) >>> 0) | lo };
+    return { kind: "auto_advance", frames: Math.max(lo, hi) }; // can get the wrong frame count when converting from AEON to MSYT because of framesLo/framesHi handling, if either value is not 0?
   }
   if (name === "delay8") return { kind: "pause", length: "short" };
   if (name === "delay15") return { kind: "pause", length: "long" };
@@ -1084,7 +1084,7 @@ function tryParseMsytControlFromRaw(rawTag) {
   if (name === "delay") {
     const lo = Number(args.framesLo || 0) & 0xffff;
     const hi = Number(args.framesHi || 0) & 0xffff;
-    return { kind: "pause", frames: ((hi << 16) >>> 0) | lo };
+    return { kind: "pause", frames: Math.max(lo, hi) }; // can get the wrong frame count when converting from AEON to MSYT because of framesLo/framesHi handling, if either value is not 0?
   }
   return null;
 }
