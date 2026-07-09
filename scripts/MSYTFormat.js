@@ -575,7 +575,27 @@ function parseMsytYamlNode(lines, startIndex, indent) {
           i = next;
           continue;
         }
-        arr.push({ [key]: parseMsytYamlScalar(after) });
+        const item = { [key]: parseMsytYamlScalar(after) };
+        let nextLineIndex = i + 1;
+        while (nextLineIndex < lines.length) {
+          const nextTrimmed = lines[nextLineIndex].trim();
+          if (nextTrimmed && nextTrimmed !== "---") break;
+          nextLineIndex++;
+        }
+        if (nextLineIndex < lines.length) {
+          const nextRaw = lines[nextLineIndex];
+          const nextIndent = msytYamlIndent(nextRaw);
+          if (nextIndent >= indent + 2 && !nextRaw.slice(indent).startsWith("- ")) {
+            const [tail, next] = parseMsytYamlNode(lines, i + 1, indent + 2);
+            if (tail && typeof tail === "object" && !Array.isArray(tail)) {
+              Object.assign(item, tail);
+              arr.push(item);
+              i = next;
+              continue;
+            }
+          }
+        }
+        arr.push(item);
         i++;
         continue;
       }
@@ -732,8 +752,16 @@ function dumpMsytYamlNode(value, indent = 0) {
             lines.push(`${sp}- ${formatMsytYamlKey(key)}: ${formatMsytYamlScalar(nested)}`);
           }
         } else {
-          lines.push(`${sp}-`);
-          lines.push(dumpMsytYamlNode(item, indent + 2));
+          const [[firstKey, firstValue], ...restEntries] = entries;
+          if (firstValue && typeof firstValue === "object") {
+            lines.push(`${sp}- ${formatMsytYamlKey(firstKey)}:`);
+            lines.push(dumpMsytYamlNode(firstValue, indent + 4));
+          } else {
+            lines.push(`${sp}- ${formatMsytYamlKey(firstKey)}: ${formatMsytYamlScalar(firstValue)}`);
+          }
+          if (restEntries.length) {
+            lines.push(dumpMsytYamlNode(Object.fromEntries(restEntries), indent + 2));
+          }
         }
       } else {
         lines.push(`${sp}- ${formatMsytYamlScalar(item)}`);
