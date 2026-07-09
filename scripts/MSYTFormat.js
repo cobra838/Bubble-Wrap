@@ -20,6 +20,10 @@ const BOTW_MSYT_GCF_TAG_NAMES = new Set([
   "delay",
   "string1",
   "number2",
+  "currentHorseName",
+  "selectedHorseName",
+  "cookingAdjective",
+  "cookingEffectCaption",
   "number9",
   "number10",
   "string11",
@@ -30,7 +34,13 @@ const BOTW_MSYT_GCF_TAG_NAMES = new Set([
   "number16",
   "number17",
   "number18",
-  "number19"
+  "number19",
+  "noTextScroll",
+  "setVoice",
+  "wordInfo",
+  "pluralCase",
+  "uppercaseNextWord",
+  "lowercaseNextWord"
 ]);
 
 const MSYT_VARIABLE_KIND_TO_TAG = {
@@ -52,6 +62,10 @@ const MSYT_TAG_TO_VARIABLE_KIND = Object.fromEntries(
 );
 
 const MSYT_RAW_ONE_FIELD_TO_TAG = {
+  3: "currentHorseName",
+  4: "selectedHorseName",
+  7: "cookingAdjective",
+  8: "cookingEffectCaption",
   10: "number10",
   13: "number13"
 };
@@ -305,12 +319,60 @@ function msytRawOneFieldTagName(control) {
   return MSYT_RAW_ONE_FIELD_TO_TAG[kind] || null;
 }
 
+function isMsytNoTextScrollControl(control) {
+  return !!control && control.kind === "raw" && control.one && control.one.two && Number(control.one.two.field_1) === 0;
+}
+
+function isMsytUppercaseNextWordControl(control) {
+  const oneField = control?.two_hundred_one?.one_field;
+  if (!control || control.kind !== "raw" || !Array.isArray(oneField) || oneField.length < 2) return false;
+  return Number(oneField[0]) === 3 && Number(oneField[1]?.field_1) === 0;
+}
+
+function isMsytLowercaseNextWordControl(control) {
+  const oneField = control?.two_hundred_one?.one_field;
+  if (!control || control.kind !== "raw" || !Array.isArray(oneField) || oneField.length < 2) return false;
+  return Number(oneField[0]) === 4 && Number(oneField[1]?.field_1) === 0;
+}
+
+function msytSetVoiceAsset(control) {
+  if (!control || control.kind !== "raw" || !control.four || !control.four.zero) return null;
+  if (Number(control.four.zero.field_1) !== 10 || typeof control.four.zero.string !== "string") return null;
+  return control.four.zero.string;
+}
+
+function isMsytRawFourThreeControl(control) {
+  return !!control && control.kind === "raw" && control.four && control.four.three && Number(control.four.three.field_1) === 0;
+}
+
+function msytWordInfoArgs(control) {
+  const dynamic = control?.two_hundred_one?.dynamic;
+  if (!control || control.kind !== "raw" || !Array.isArray(dynamic) || dynamic.length < 2) return null;
+  if (Number(dynamic[0]) !== 0) return null;
+  const payload = dynamic[1];
+  if (!payload || Number(payload.len) !== 4 || !Array.isArray(payload.field_2) || payload.field_2.length < 4) return null;
+  return {
+    gender: String(payload.field_2[0]),
+    defArticle: String(payload.field_2[1]),
+    indefArticle: String(payload.field_2[2]),
+    isPlural: payload.field_2[3] ? "true" : "false"
+  };
+}
+
 function msytControlToRaw(control) {
   if (!control || typeof control !== "object") return "";
   const kind = control.kind || "";
   if (isMsytPageBreakControl(control)) return "{{pageBreak}}";
   const rawOneFieldTag = msytRawOneFieldTagName(control);
   if (rawOneFieldTag) return buildTagStr(rawOneFieldTag);
+  if (isMsytNoTextScrollControl(control)) return "{{noTextScroll}}";
+  if (isMsytUppercaseNextWordControl(control)) return "{{uppercaseNextWord}}";
+  if (isMsytLowercaseNextWordControl(control)) return "{{lowercaseNextWord}}";
+  const setVoiceAsset = msytSetVoiceAsset(control);
+  if (setVoiceAsset != null) return buildTagStr("setVoice", { asset: setVoiceAsset }, ["asset"]);
+  if (isMsytRawFourThreeControl(control)) return "{{4:3}}";
+  const wordInfoArgs = msytWordInfoArgs(control);
+  if (wordInfoArgs) return buildTagStr("wordInfo", wordInfoArgs, ["gender", "defArticle", "indefArticle", "isPlural"]);
   if (kind === "set_colour" && typeof control.colour === "string") {
     const editorName = msytColorToEditorName(control.colour);
     if (editorName) return buildTagStr("color", { id: editorName });
@@ -348,6 +410,17 @@ function msytControlToRaw(control) {
   }
   if (kind === "single_choice" && control.label != null) {
     return buildTagStr("singleChoice", { label: String(control.label), confirmed: "1" });
+  }
+  if (kind === "localisation" && control.localisation_kind === "plural" && Array.isArray(control.options) && control.options.length >= 3) {
+    return buildTagStr(
+      "pluralCase",
+      {
+        arg1: String(control.options[0] ?? ""),
+        arg2: String(control.options[1] ?? ""),
+        arg3: String(control.options[2] ?? "")
+      },
+      ["arg1", "arg2", "arg3"]
+    );
   }
   if (kind === "icon" && control.icon != null) {
     const mapped = msytIconToEditorValue(control.icon);
@@ -815,6 +888,79 @@ function tryParseMsytControlFromRaw(rawTag) {
       kind: "raw",
       two: {
         one_field: [MSYT_TAG_TO_RAW_ONE_FIELD[name], { field_1: 0 }]
+      }
+    };
+  }
+  if (name === "noTextScroll") {
+    return {
+      kind: "raw",
+      one: {
+        two: {
+          field_1: 0
+        }
+      }
+    };
+  }
+  if (name === "uppercaseNextWord") {
+    return {
+      kind: "raw",
+      two_hundred_one: {
+        one_field: [3, { field_1: 0 }]
+      }
+    };
+  }
+  if (name === "lowercaseNextWord") {
+    return {
+      kind: "raw",
+      two_hundred_one: {
+        one_field: [4, { field_1: 0 }]
+      }
+    };
+  }
+  if (name === "setVoice") {
+    return {
+      kind: "raw",
+      four: {
+        zero: {
+          field_1: 10,
+          string: String(args.asset || "")
+        }
+      }
+    };
+  }
+  if (name === "4:3") {
+    return {
+      kind: "raw",
+      four: {
+        three: {
+          field_1: 0
+        }
+      }
+    };
+  }
+  if (name === "pluralCase") {
+    return {
+      kind: "localisation",
+      localisation_kind: "plural",
+      options: [String(args.arg1 || ""), String(args.arg2 || ""), String(args.arg3 || "")]
+    };
+  }
+  if (name === "wordInfo") {
+    return {
+      kind: "raw",
+      two_hundred_one: {
+        dynamic: [
+          0,
+          {
+            len: 4,
+            field_2: [
+              Number(args.gender ?? 0),
+              Number(args.defArticle ?? 255),
+              Number(args.indefArticle ?? 255),
+              String(args.isPlural || "").toLowerCase() === "true" ? 1 : 0
+            ]
+          }
+        ]
       }
     };
   }
