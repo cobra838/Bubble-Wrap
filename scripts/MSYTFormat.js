@@ -17,8 +17,48 @@ const BOTW_MSYT_GCF_TAG_NAMES = new Set([
   "delay8",
   "delay15",
   "delay30",
-  "delay"
+  "delay",
+  "string1",
+  "number2",
+  "number9",
+  "number10",
+  "string11",
+  "string12",
+  "number13",
+  "number14",
+  "number15",
+  "number16",
+  "number17",
+  "number18",
+  "number19"
 ]);
+
+const MSYT_VARIABLE_KIND_TO_TAG = {
+  1: "string1",
+  2: "number2",
+  9: "number9",
+  11: "string11",
+  12: "string12",
+  14: "number14",
+  15: "number15",
+  16: "number16",
+  17: "number17",
+  18: "number18",
+  19: "number19"
+};
+
+const MSYT_TAG_TO_VARIABLE_KIND = Object.fromEntries(
+  Object.entries(MSYT_VARIABLE_KIND_TO_TAG).map(([kind, tag]) => [tag, Number(kind)])
+);
+
+const MSYT_RAW_ONE_FIELD_TO_TAG = {
+  10: "number10",
+  13: "number13"
+};
+
+const MSYT_TAG_TO_RAW_ONE_FIELD = Object.fromEntries(
+  Object.entries(MSYT_RAW_ONE_FIELD_TO_TAG).map(([kind, tag]) => [tag, Number(kind)])
+);
 
 const BOTW_ICON_ID_TO_NAME = {
   0: "LStickUp",
@@ -120,8 +160,13 @@ function parseTI(inner) {
   return { name, args };
 }
 
-function buildTagStr(name, args = {}) {
-  const parts = [name, ...Object.entries(args).map(([key, value]) => `${key}="${value}"`)];
+function buildTagStr(name, args = {}, order = []) {
+  const keys = order.length ? order : Object.keys(args);
+  const parts = [name];
+  keys.forEach((key) => {
+    if (args[key] == null) return;
+    parts.push(`${key}="${args[key]}"`);
+  });
   return `{{${parts.join(" ")}}}`;
 }
 
@@ -250,15 +295,40 @@ function isMsytPageBreakControl(control) {
   );
 }
 
+function msytRawOneFieldTagName(control) {
+  const oneField = control?.two?.one_field;
+  if (!Array.isArray(oneField) || oneField.length < 2) return null;
+  const kind = Number(oneField[0]);
+  const trailing = oneField[1];
+  if (!Number.isFinite(kind) || !trailing || typeof trailing !== "object") return null;
+  if (Number(trailing.field_1) !== 0) return null;
+  return MSYT_RAW_ONE_FIELD_TO_TAG[kind] || null;
+}
+
 function msytControlToRaw(control) {
   if (!control || typeof control !== "object") return "";
   const kind = control.kind || "";
   if (isMsytPageBreakControl(control)) return "{{pageBreak}}";
+  const rawOneFieldTag = msytRawOneFieldTagName(control);
+  if (rawOneFieldTag) return buildTagStr(rawOneFieldTag);
   if (kind === "set_colour" && typeof control.colour === "string") {
     const editorName = msytColorToEditorName(control.colour);
     if (editorName) return buildTagStr("color", { id: editorName });
   }
   if (kind === "reset_colour") return buildTagStr("color", { id: "Default" });
+  if (kind === "variable" && control.variable_kind != null && control.name != null) {
+    const tagName = MSYT_VARIABLE_KIND_TO_TAG[Number(control.variable_kind)];
+    if (tagName) {
+      return buildTagStr(
+        tagName,
+        {
+          ref: String(control.name),
+          index: String(control.index ?? 0)
+        },
+        ["ref", "index"]
+      );
+    }
+  }
   if (kind === "choice" && Array.isArray(control.choice_labels)) {
     const labels = control.choice_labels.map((value) => String(value));
     const tagName = msytChoiceTagName(labels);
@@ -740,6 +810,14 @@ function tryParseMsytControlFromRaw(rawTag) {
   const { name, args } = parseTI(rawTag.slice(2, -2));
   if (name === "pageBreak") return { kind: "raw", zero: { four: { field_1: 0 } } };
   if (name === "msyt" && args.json) return JSON.parse(base64ToUtf8(args.json));
+  if (MSYT_TAG_TO_RAW_ONE_FIELD[name] != null) {
+    return {
+      kind: "raw",
+      two: {
+        one_field: [MSYT_TAG_TO_RAW_ONE_FIELD[name], { field_1: 0 }]
+      }
+    };
+  }
   if (name === "color") {
     const id = args.id || "-1";
     if (id === "Default" || id === "-1") return { kind: "reset_colour" };
@@ -761,6 +839,17 @@ function tryParseMsytControlFromRaw(rawTag) {
     };
   }
   if (name === "singleChoice") return { kind: "single_choice", label: Number(args.label || 0) };
+  if (MSYT_TAG_TO_VARIABLE_KIND[name] != null) {
+    const control = {
+      kind: "variable",
+      variable_kind: MSYT_TAG_TO_VARIABLE_KIND[name],
+      name: String(args.ref || "")
+    };
+    if (args.index != null && args.index !== "" && Number(args.index) !== 0) {
+      control.index = Number(args.index);
+    }
+    return control;
+  }
   if (name === "icon") {
     const mapped = BOTW_ICON_ID_TO_NAME[Number(args.type || 0)];
     const icon = editorValueToMsytIcon(mapped || String(args.type || 0));
