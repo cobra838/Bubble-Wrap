@@ -235,6 +235,11 @@ function msytChoiceTagName(labels) {
   return labels.length >= 2 && labels.length <= 4 ? `choice${labels.length}` : null;
 }
 
+// unknown choice2 -> 6 // choice3 -> 8 // choice4 -> 10
+function msytChoiceUnknownDefault(count) {
+  return count * 2 + 2;
+}
+
 function isMsytPageBreakControl(control) {
   return (
     !!control &&
@@ -258,15 +263,17 @@ function msytControlToRaw(control) {
     const labels = control.choice_labels.map((value) => String(value));
     const tagName = msytChoiceTagName(labels);
     if (tagName) {
-      const args = {
-        selectedIndex: String(control.selected_index ?? 0),
-        cancelIndex: String(control.cancel_index ?? 0)
-      };
+      const args = {};
+      const order = [];
       labels.forEach((label, idx) => {
-        args[`label${idx + 1}`] = label;
+        const key = `label${idx + 1}`;
+        order.push(key);
+        args[key] = label;
       });
-      if (control.unknown != null) args.unknown = String(control.unknown);
-      return buildTagStr(tagName, args);
+      order.push("selectedIndex", "cancelIndex");
+      args.selectedIndex = String(control.selected_index ?? 0);
+      args.cancelIndex = String(control.cancel_index ?? 0);
+      return buildTagStr(tagName, args, order);
     }
   }
   if (kind === "single_choice" && control.label != null) {
@@ -750,7 +757,7 @@ function tryParseMsytControlFromRaw(rawTag) {
       choice_labels,
       selected_index: Number(args.selectedIndex ?? 0),
       cancel_index: Number(args.cancelIndex ?? 0),
-      unknown: Number(args.unknown ?? 6)
+      unknown: msytChoiceUnknownDefault(count)
     };
   }
   if (name === "singleChoice") return { kind: "single_choice", label: Number(args.label || 0) };
