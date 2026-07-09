@@ -424,7 +424,7 @@ function msytControlToRaw(control) {
   }
   if (kind === "icon" && control.icon != null) {
     const mapped = msytIconToEditorValue(control.icon);
-    if (mapped) return buildTagStr("icon", { type: String(BOTW_NAME_TO_ICON_ID[mapped] ?? mapped) });
+    if (mapped) return buildTagStr("icon", { type: String(mapped) });
   }
   if (kind === "text_size" && control.percent != null) return buildTagStr("size", { value: String(control.percent) });
   if (kind === "animation" && typeof control.name === "string") return buildTagStr("animation", { name: control.name });
