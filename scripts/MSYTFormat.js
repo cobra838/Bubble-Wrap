@@ -464,44 +464,83 @@ function parseMsytYamlNode(lines, startIndex, indent) {
   return [obj, i];
 }
 
-function isMsytYamlRoot(root) {
-  return (
-    !!root &&
-    typeof root === "object" &&
-    !Array.isArray(root) &&
-    !!root.entries &&
-    typeof root.entries === "object" &&
-    !Array.isArray(root.entries) &&
-    Number.isFinite(Number(root.group_count))
-  );
-}
-
 export function parseMsytYaml(text) {
   const lines = normalizeNewlines(text).split("\n");
-  const [root] = parseMsytYamlNode(lines, 0, 0);
-  if (!isMsytYamlRoot(root)) throw new Error("Unsupported .msyt structure");
-  const entries = [];
-  for (const label of Object.keys(root.entries)) {
-    const entry = root.entries[label] || {};
-    entries.push({
-      label: String(label),
-      attrKey: "attributes",
-      attrVal: entry.attributes != null ? String(entry.attributes) : "",
-      msytHasAttributes: entry.attributes != null,
-      content: msytContentsToRaw(entry.contents || []),
-      docKey: String(label)
-    });
-  }
   const meta = {};
-  for (const [key, value] of Object.entries(root)) {
-    if (key !== "entries") meta[key] = value;
+  const entries = [];
+  let foundEntries = false;
+  for (let i = 0; i < lines.length;) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed === "---") {
+      i++;
+      continue;
+    }
+    const indent = msytYamlIndent(rawLine);
+    if (indent !== 0) throw new Error(`Unexpected top-level indentation in msyt near: ${trimmed}`);
+    const match = rawLine.match(/^("([^"\\]|\\.)*"|'[^']*'|[^:]+):(.*)$/);
+    if (!match) throw new Error(`Unsupported msyt YAML line: ${rawLine}`);
+    const key = String(parseMsytYamlKey(match[1]));
+    const after = match[3].trimStart();
+    if (key !== "entries") {
+      if (after === "") {
+        const [value, next] = parseMsytYamlNode(lines, i + 1, 2);
+        meta[key] = value;
+        i = next;
+      } else {
+        meta[key] = parseMsytYamlScalar(after);
+        i++;
+      }
+      continue;
+    }
+    if (after !== "") throw new Error("Unsupported inline entries block in .msyt");
+    foundEntries = true;
+    i++;
+    while (i < lines.length) {
+      const entryLine = lines[i];
+      const entryTrimmed = entryLine.trim();
+      if (!entryTrimmed) {
+        i++;
+        continue;
+      }
+      const entryIndent = msytYamlIndent(entryLine);
+      if (entryIndent <= 0) break;
+      if (entryIndent !== 2 || entryTrimmed.startsWith("- ")) {
+        throw new Error(`Unsupported msyt entry line: ${entryTrimmed}`);
+      }
+      const entryMatch = entryLine.slice(2).match(/^("([^"\\]|\\.)*"|'[^']*'|[^:]+):(.*)$/);
+      if (!entryMatch) throw new Error(`Unsupported msyt entry header: ${entryTrimmed}`);
+      const label = String(parseMsytYamlKey(entryMatch[1]));
+      const entryAfter = entryMatch[3].trimStart();
+      let entry = {};
+      if (entryAfter === "") {
+        const [value, next] = parseMsytYamlNode(lines, i + 1, 4);
+        entry = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+        i = next;
+      } else {
+        const inlineValue = parseMsytYamlScalar(entryAfter);
+        entry = inlineValue && typeof inlineValue === "object" && !Array.isArray(inlineValue) ? inlineValue : {};
+        i++;
+      }
+      entries.push({
+        label,
+        attrKey: "attributes",
+        attrVal: entry.attributes != null ? String(entry.attributes) : "",
+        msytHasAttributes: entry.attributes != null,
+        content: msytContentsToRaw(entry.contents || []),
+        docKey: String(label)
+      });
+    }
+  }
+  if (!foundEntries || !Number.isFinite(Number(meta.group_count))) {
+    throw new Error("Unsupported .msyt structure");
   }
   return { entries, meta };
 }
 
 function formatMsytYamlKey(key) {
   const value = String(key);
-  if (/^\d+$/.test(value) && !/^0\d/.test(value)) return value;
+  if (/^\d+$/.test(value)) return JSON.stringify(value);
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : JSON.stringify(value);
 }
 
@@ -573,16 +612,106 @@ function dumpMsytYamlNode(value, indent = 0) {
 export function parseMsytBcmlJson(text) {
   const root = JSON.parse(text);
   if (!isMsytBcmlRoot(root)) throw new Error("Unsupported texts.json structure");
+  const normalized = normalizeNewlines(text);
+  const skipWs = (index) => {
+    let i = index;
+    while (i < normalized.length && /\s/.test(normalized[i])) i++;
+    return i;
+  };
+  const parseString = (index) => {
+    if (normalized[index] !== '"') throw new Error("Expected JSON string");
+    let i = index + 1;
+    let escaped = false;
+    while (i < normalized.length) {
+      const ch = normalized[i];
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        const token = normalized.slice(index, i + 1);
+        return [JSON.parse(token), i + 1];
+      }
+      i++;
+    }
+    throw new Error("Unterminated JSON string");
+  };
+  const skipValue = (index) => {
+    let i = skipWs(index);
+    const ch = normalized[i];
+    if (ch === "{") {
+      i = skipWs(i + 1);
+      if (normalized[i] === "}") return i + 1;
+      while (i < normalized.length) {
+        const [, nextKey] = parseString(i);
+        i = skipWs(nextKey);
+        if (normalized[i] !== ":") throw new Error("Expected : in JSON object");
+        i = skipValue(i + 1);
+        i = skipWs(i);
+        if (normalized[i] === "}") return i + 1;
+        if (normalized[i] !== ",") throw new Error("Expected , in JSON object");
+        i = skipWs(i + 1);
+      }
+      throw new Error("Unterminated JSON object");
+    }
+    if (ch === "[") {
+      i = skipWs(i + 1);
+      if (normalized[i] === "]") return i + 1;
+      while (i < normalized.length) {
+        i = skipValue(i);
+        i = skipWs(i);
+        if (normalized[i] === "]") return i + 1;
+        if (normalized[i] !== ",") throw new Error("Expected , in JSON array");
+        i = skipWs(i + 1);
+      }
+      throw new Error("Unterminated JSON array");
+    }
+    if (ch === '"') return parseString(i)[1];
+    const primitive = normalized.slice(i).match(/^(true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/);
+    if (!primitive) throw new Error("Unsupported JSON value");
+    return i + primitive[1].length;
+  };
+  const parseObjectOrder = (index, level) => {
+    let i = skipWs(index);
+    if (normalized[i] !== "{") throw new Error("Expected JSON object");
+    i = skipWs(i + 1);
+    const items = [];
+    if (normalized[i] === "}") return [items, i + 1];
+    while (i < normalized.length) {
+      const [key, nextKey] = parseString(i);
+      i = skipWs(nextKey);
+      if (normalized[i] !== ":") throw new Error("Expected : after JSON key");
+      i = skipWs(i + 1);
+      if (level < 2) {
+        const [children, next] = parseObjectOrder(i, level + 1);
+        items.push({ key, children });
+        i = next;
+      } else {
+        i = skipValue(i);
+        items.push({ key });
+      }
+      i = skipWs(i);
+      if (normalized[i] === "}") return [items, i + 1];
+      if (normalized[i] !== ",") throw new Error("Expected , after JSON property");
+      i = skipWs(i + 1);
+    }
+    throw new Error("Unterminated JSON object");
+  };
+  const [orderedLocales] = parseObjectOrder(0, 0);
   const entries = [];
-  const locales = Object.keys(root);
-  const defaultLocale = locales[0] || "EUen";
+  const defaultLocale = orderedLocales[0]?.key || "EUen";
   let defaultPath = "NewFile.msyt";
-  for (const locale of locales) {
+  for (const localeNode of orderedLocales) {
+    const locale = localeNode.key;
     const files = root[locale];
-    for (const path of Object.keys(files)) {
+    if (!files || typeof files !== "object" || Array.isArray(files)) continue;
+    for (const pathNode of localeNode.children || []) {
+      const path = pathNode.key;
       if (defaultPath === "NewFile.msyt") defaultPath = path;
       const labels = files[path];
-      for (const label of Object.keys(labels)) {
+      if (!labels || typeof labels !== "object" || Array.isArray(labels)) continue;
+      for (const labelNode of pathNode.children || []) {
+        const label = labelNode.key;
         const entry = labels[label] || {};
         entries.push({
           label: String(label),
@@ -679,20 +808,68 @@ export function rawToMsytContents(raw) {
 
 export function buildMsytBcmlJson(chains, msytDocInfo) {
   if (!chains.length) throw new Error("There is nothing to export");
-  const root = {};
+  const locales = [];
+  const findBy = (items, key, value) => {
+    for (const item of items) {
+      if (item[key] === value) return item;
+    }
+    return null;
+  };
   for (const chain of chains) {
     const locale = chain.msytLocale || msytDocInfo.defaultLocale || "EUen";
     const path = chain.msytPath || msytDocInfo.defaultPath || "NewFile.msyt";
     const label = chain.label || "";
     const raw = chain.msytRaw ?? chain.raw;
-    if (!root[locale]) root[locale] = {};
-    if (!root[locale][path]) root[locale][path] = {};
-    root[locale][path][label] = {
-      ...(chain.msytHasAttributes || chain.attrVal !== "" ? { attributes: chain.attrVal } : {}),
-      contents: rawToMsytContents(raw)
-    };
+    let localeNode = findBy(locales, "locale", locale);
+    if (!localeNode) {
+      localeNode = { locale, paths: [] };
+      locales.push(localeNode);
+    }
+    let pathNode = findBy(localeNode.paths, "path", path);
+    if (!pathNode) {
+      pathNode = { path, labels: [] };
+      localeNode.paths.push(pathNode);
+    }
+    pathNode.labels.push({
+      label,
+      entry: {
+        ...(chain.msytHasAttributes || chain.attrVal !== "" ? { attributes: chain.attrVal } : {}),
+        contents: rawToMsytContents(raw)
+      }
+    });
   }
-  return `${JSON.stringify(root, null, 2)}\n`;
+  const dumpValue = (value, indent) => {
+    const sp = " ".repeat(indent);
+    if (Array.isArray(value)) {
+      if (!value.length) return "[]";
+      return `[\n${value.map((item) => `${" ".repeat(indent + 2)}${dumpValue(item, indent + 2)}`).join(",\n")}\n${sp}]`;
+    }
+    if (value && typeof value === "object") {
+      const pairs = Object.entries(value);
+      if (!pairs.length) return "{}";
+      return `{\n${pairs
+        .map(([key, nested]) => `${" ".repeat(indent + 2)}${JSON.stringify(String(key))}: ${dumpValue(nested, indent + 2)}`)
+        .join(",\n")}\n${sp}}`;
+    }
+    return JSON.stringify(value);
+  };
+  const lines = ["{"];
+  locales.forEach((localeNode, localeIndex) => {
+    lines.push(`  ${JSON.stringify(localeNode.locale)}: {`);
+    localeNode.paths.forEach((pathNode, pathIndex) => {
+      lines.push(`    ${JSON.stringify(pathNode.path)}: {`);
+      pathNode.labels.forEach((labelNode, labelIndex) => {
+        const suffix = labelIndex === pathNode.labels.length - 1 ? "" : ",";
+        lines.push(`      ${JSON.stringify(String(labelNode.label))}: ${dumpValue(labelNode.entry, 6)}${suffix}`);
+      });
+      const pathSuffix = pathIndex === localeNode.paths.length - 1 ? "" : ",";
+      lines.push(`    }${pathSuffix}`);
+    });
+    const localeSuffix = localeIndex === locales.length - 1 ? "" : ",";
+    lines.push(`  }${localeSuffix}`);
+  });
+  lines.push("}");
+  return `${lines.join("\n")}\n`;
 }
 
 export function buildMsytYaml(chains, msytDocInfo) {
@@ -701,17 +878,32 @@ export function buildMsytYaml(chains, msytDocInfo) {
     msytDocInfo && msytDocInfo.msytMeta && typeof msytDocInfo.msytMeta === "object"
       ? msytDocInfo.msytMeta
       : { group_count: 0 };
-  const root = {};
+  const lines = ["---"];
   for (const [key, value] of Object.entries(meta)) {
-    if (key !== "entries") root[key] = value;
+    if (key === "entries") continue;
+    if (value && typeof value === "object") {
+      if (Array.isArray(value) && !value.length) lines.push(`${formatMsytYamlKey(key)}: []`);
+      else {
+        lines.push(`${formatMsytYamlKey(key)}:`);
+        lines.push(dumpMsytYamlNode(value, 2));
+      }
+    } else {
+      lines.push(`${formatMsytYamlKey(key)}: ${formatMsytYamlScalar(value)}`);
+    }
   }
-  root.entries = {};
+  lines.push("entries:");
   for (const chain of chains) {
     const raw = chain.msytRaw ?? chain.raw;
-    root.entries[chain.label || ""] = {
-      ...(chain.msytHasAttributes || chain.attrVal !== "" ? { attributes: chain.attrVal } : {}),
-      contents: rawToMsytContents(raw)
-    };
+    lines.push(`  ${formatMsytYamlKey(chain.label || "")}:`);
+    lines.push(
+      dumpMsytYamlNode(
+        {
+          ...(chain.msytHasAttributes || chain.attrVal !== "" ? { attributes: chain.attrVal } : {}),
+          contents: rawToMsytContents(raw)
+        },
+        4
+      )
+    );
   }
-  return `---\n${dumpMsytYamlNode(root)}\n`;
+  return `${lines.join("\n")}\n`;
 }
