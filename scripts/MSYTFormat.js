@@ -18,6 +18,7 @@ const BOTW_MSYT_GCF_TAG_NAMES = new Set([
   "delay15",
   "delay30",
   "delay",
+  "textSpeed",
   "string1",
   "number2",
   "currentHorseName",
@@ -335,6 +336,16 @@ function isMsytLowercaseNextWordControl(control) {
   return Number(oneField[0]) === 4 && Number(oneField[1]?.field_1) === 0;
 }
 
+function msytTextSpeedValue(control) {
+  const block = control?.one?.one;
+  if (!control || control.kind !== "raw" || !block) return null;
+  if (Number(block.field_1) !== 4 || !Number.isFinite(Number(block.field_2))) return null;
+  const view = new DataView(new ArrayBuffer(4));
+  view.setUint32(0, Number(block.field_2), true);
+  const value = view.getFloat32(0, true);
+  return Number.isInteger(value) ? `${value}.0` : String(value);
+}
+
 function msytSetVoiceAsset(control) {
   if (!control || control.kind !== "raw" || !control.four || !control.four.zero) return null;
   if (Number(control.four.zero.field_1) !== 10 || typeof control.four.zero.string !== "string") return null;
@@ -368,6 +379,8 @@ function msytControlToRaw(control) {
   if (isMsytNoTextScrollControl(control)) return "{{noTextScroll}}";
   if (isMsytUppercaseNextWordControl(control)) return "{{uppercaseNextWord}}";
   if (isMsytLowercaseNextWordControl(control)) return "{{lowercaseNextWord}}";
+  const textSpeedValue = msytTextSpeedValue(control);
+  if (textSpeedValue != null) return buildTagStr("textSpeed", { value: textSpeedValue }, ["value"]);
   const setVoiceAsset = msytSetVoiceAsset(control);
   if (setVoiceAsset != null) return buildTagStr("setVoice", { asset: setVoiceAsset }, ["asset"]);
   if (isMsytRawFourThreeControl(control)) return "{{4:3}}";
@@ -942,6 +955,22 @@ function tryParseMsytControlFromRaw(rawTag) {
       kind: "raw",
       two_hundred_one: {
         one_field: [4, { field_1: 0 }]
+      }
+    };
+  }
+  if (name === "textSpeed") {
+    if (args.value == null) return null;
+    const floatValue = Number(args.value);
+    if (!Number.isFinite(floatValue)) return null;
+    const view = new DataView(new ArrayBuffer(4));
+    view.setFloat32(0, floatValue, true);
+    return {
+      kind: "raw",
+      one: {
+        one: {
+          field_1: 4,
+          field_2: view.getUint32(0, true)
+        }
       }
     };
   }
