@@ -690,7 +690,7 @@ function msytYamlIndent(line) {
 function parseMsytYamlScalar(text) {
   const value = String(text).trim();
   if (value === "") return "";
-  if (value === "null" || value === "~") return null;
+  if (value === "~") return null;
   if (value === "true") return true;
   if (value === "false") return false;
   if (/^-?\d+$/.test(value)) return Number(value);
@@ -903,7 +903,7 @@ function formatMsytYamlKey(key) {
 }
 
 function formatMsytYamlScalar(value) {
-  if (value === null) return "null";
+  if (value === null) return "~";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   const text = String(value);
   if (text === "") return '""';
