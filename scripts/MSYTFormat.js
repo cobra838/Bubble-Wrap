@@ -6,6 +6,8 @@ const BOTW_MSYT_GCF_TAG_NAMES = new Set([
   "choice2",
   "choice3",
   "choice4",
+  "choiceByFlags",
+  "fiveFlags",
   "singleChoice",
   "icon",
   "size",
@@ -370,6 +372,175 @@ function msytWordInfoArgs(control) {
   };
 }
 
+// Helper func for "choiceByFlags" and "fiveFlags"
+function readMsytWordString(words, cursor) {
+  const len = Math.floor(Number(words[cursor.index++] || 0) / 2);
+  let text = "";
+  for (let i = 0; i < len; i++) text += String.fromCharCode(Number(words[cursor.index++] || 0));
+  return text;
+}
+function pushMsytWordString(words, text) {
+  const value = String(text || "");
+  words.push(value.length * 2);
+  for (let i = 0; i < value.length; i++) words.push(value.charCodeAt(i));
+}
+function readMsytByteWord(bytes, offset = 0) {
+  return (((Number(bytes?.[offset] || 0) & 0xff) << 8) | (Number(bytes?.[offset + 1] || 0) & 0xff)) & 0xffff;
+}
+function msytByteWord(value) {
+  const v = Number(value || 0) & 0xffff;
+  return [(v >>> 8) & 0xff, v & 0xff];
+}
+function appendMsytUnknownPairs(words, value) {
+  if (!Array.isArray(value)) return;
+  if (Array.isArray(value[0])) {
+    value.forEach((chunk) => {
+      words.push(readMsytByteWord(chunk, 0), readMsytByteWord(chunk, 2));
+    });
+    return;
+  }
+  for (let i = 0; i + 3 < value.length; i += 4) {
+    words.push(readMsytByteWord(value, i), readMsytByteWord(value, i + 2));
+  }
+}
+
+function msytChoiceByFlagsArgs(control) {
+  const block = control?.one?.eight;
+  if (!control || control.kind !== "raw" || !block || !Array.isArray(block.field_1) || !Array.isArray(block.field_2)) return null;
+  const words = [];
+  appendMsytUnknownPairs(words, block.unknown_1);
+  block.field_1.forEach((value) => words.push(Number(value) & 0xffff));
+  const cursor = { index: 0 };
+  return {
+    varType: String(Number(words[cursor.index++] || 0) & 0xffff),
+    flag1: readMsytWordString(words, cursor),
+    choice1: String(Number(words[cursor.index++] || 0) & 0xffff),
+    flag2: readMsytWordString(words, cursor),
+    choice2: String(Number(words[cursor.index++] || 0) & 0xffff),
+    flag3: readMsytWordString(words, cursor),
+    choice3: String(Number(words[cursor.index++] || 0) & 0xffff),
+    default: String(readMsytByteWord(block.field_2, 0)),
+    cancel: String(readMsytByteWord(block.field_2, 2))
+  };
+}
+
+function msytFiveFlagsArgs(control) {
+  const block = control?.one?.nine;
+  if (!control || control.kind !== "raw" || !block || !Array.isArray(block.strings) || !Array.isArray(block.field_6)) return null;
+  const words = [];
+  appendMsytUnknownPairs(words, block.unknown_1);
+  block.strings.forEach((item) => {
+    words.push(Number(item?.field_1 || 0) & 0xffff);
+    pushMsytWordString(words, item?.string || "");
+  });
+  words.push(Number(block.field_3 || 0) & 0xffff, Number(block.field_4 || 0) & 0xffff);
+  appendMsytUnknownPairs(words, block.unknown_2);
+  const cursor = { index: 0 };
+  return {
+    flagIdx1: String(Number(words[cursor.index++] || 0) & 0xffff),
+    name1: readMsytWordString(words, cursor),
+    flagIdx2: String(Number(words[cursor.index++] || 0) & 0xffff),
+    name2: readMsytWordString(words, cursor),
+    flagIdx3: String(Number(words[cursor.index++] || 0) & 0xffff),
+    name3: readMsytWordString(words, cursor),
+    flagIdx4: String(Number(words[cursor.index++] || 0) & 0xffff),
+    name4: readMsytWordString(words, cursor),
+    flagIdx5: String(Number(words[cursor.index++] || 0) & 0xffff),
+    name5: readMsytWordString(words, cursor),
+    slot1: String(Number(words[cursor.index++] || 0) & 0xffff),
+    cond1: String(Number(words[cursor.index++] || 0) & 0xffff),
+    slot2: String(Number(words[cursor.index++] || 0) & 0xffff),
+    cond2: String(Number(words[cursor.index++] || 0) & 0xffff),
+    slot3: String(Number(words[cursor.index++] || 0) & 0xffff),
+    cond3: String(Number(words[cursor.index++] || 0) & 0xffff),
+    cancel: String(readMsytByteWord(block.field_6, 0))
+  };
+}
+
+function buildMsytChoiceByFlagsControl(args) {
+  const field_1 = [];
+  const unknown_1 = [];
+  const varType = Number(args.varType || 0) & 0xffff;
+  const flag1 = String(args.flag1 || "");
+  if (varType === 0xffff && flag1 === "") {
+    unknown_1.push([255, 255, 0, 0]);
+  } else {
+    field_1.push(varType);
+    pushMsytWordString(field_1, flag1);
+  }
+  field_1.push(Number(args.choice1 || 0) & 0xffff);
+  pushMsytWordString(field_1, args.flag2);
+  field_1.push(Number(args.choice2 || 0) & 0xffff);
+  pushMsytWordString(field_1, args.flag3);
+  field_1.push(Number(args.choice3 || 0) & 0xffff);
+  return {
+    kind: "raw",
+    one: {
+      eight: {
+        unknown_1,
+        field_1,
+        field_2: [...msytByteWord(args.default), ...msytByteWord(args.cancel)]
+      }
+    }
+  };
+}
+
+function isMsytEmptyFlagPair(words, offset) {
+  return (Number(words[offset]) & 0xffff) === 0xffff && Number(words[offset + 1] || 0) === 0;
+}
+
+function readMsytStringEntry(words, cursor) {
+  const field_1 = Number(words[cursor.index++] || 0) & 0xffff;
+  const string = readMsytWordString(words, cursor);
+  return { field_1, string };
+}
+
+function buildMsytFiveFlagsControl(args) {
+  const words = [];
+  for (let i = 1; i <= 5; i++) {
+    words.push(Number(args[`flagIdx${i}`] || 0) & 0xffff);
+    pushMsytWordString(words, args[`name${i}`]);
+  }
+  for (let i = 1; i <= 3; i++) {
+    words.push(Number(args[`slot${i}`] || 0) & 0xffff, Number(args[`cond${i}`] || 0) & 0xffff);
+  }
+
+  let unknown_1 = null;
+  if (isMsytEmptyFlagPair(words, 0) && isMsytEmptyFlagPair(words, 2) && isMsytEmptyFlagPair(words, 4)) {
+    unknown_1 = [255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0];
+    words.splice(0, 6);
+  }
+
+  const cursor = { index: 0 };
+  const strings = [
+    readMsytStringEntry(words, cursor),
+    readMsytStringEntry(words, cursor),
+    readMsytStringEntry(words, cursor),
+    readMsytStringEntry(words, cursor)
+  ];
+  const field_3 = Number(words[cursor.index++] || 0) & 0xffff;
+  const field_4 = Number(words[cursor.index++] || 0) & 0xffff;
+
+  let unknown_2 = null;
+  if (isMsytEmptyFlagPair(words, cursor.index) && isMsytEmptyFlagPair(words, cursor.index + 2) && isMsytEmptyFlagPair(words, cursor.index + 4)) {
+    unknown_2 = [255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0];
+  }
+
+  return {
+    kind: "raw",
+    one: {
+      nine: {
+        unknown_1,
+        strings,
+        field_3,
+        field_4,
+        unknown_2,
+        field_6: msytByteWord(args.cancel)
+      }
+    }
+  };
+}
+
 function msytControlToRaw(control) {
   if (!control || typeof control !== "object") return "";
   const kind = control.kind || "";
@@ -386,6 +557,10 @@ function msytControlToRaw(control) {
   if (isMsytRawFourThreeControl(control)) return "{{4:3}}";
   const wordInfoArgs = msytWordInfoArgs(control);
   if (wordInfoArgs) return buildTagStr("wordInfo", wordInfoArgs, ["gender", "defArticle", "indefArticle", "isPlural"]);
+  const choiceByFlagsArgs = msytChoiceByFlagsArgs(control);
+  if (choiceByFlagsArgs) return buildTagStr("choiceByFlags", choiceByFlagsArgs, ["varType", "flag1", "choice1", "flag2", "choice2", "flag3", "choice3", "default", "cancel"]);
+  const fiveFlagsArgs = msytFiveFlagsArgs(control);
+  if (fiveFlagsArgs) return buildTagStr("fiveFlags", fiveFlagsArgs, ["flagIdx1", "name1", "flagIdx2", "name2", "flagIdx3", "name3", "flagIdx4", "name4", "flagIdx5", "name5", "slot1", "cond1", "slot2", "cond2", "slot3", "cond3", "cancel"]);
   if (kind === "set_colour" && typeof control.colour === "string") {
     const editorName = msytColorToEditorName(control.colour);
     if (editorName) return buildTagStr("color", { id: editorName });
@@ -1041,6 +1216,8 @@ function tryParseMsytControlFromRaw(rawTag) {
       unknown: msytChoiceUnknownDefault(count)
     };
   }
+  if (name === "choiceByFlags") return buildMsytChoiceByFlagsControl(args);
+  if (name === "fiveFlags") return buildMsytFiveFlagsControl(args);
   if (name === "singleChoice") return { kind: "single_choice", label: Number(args.label || 0) };
   if (MSYT_TAG_TO_VARIABLE_KIND[name] != null) {
     const control = {
