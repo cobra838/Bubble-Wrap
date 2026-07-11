@@ -215,7 +215,7 @@ function mapEmotionIdByName(name, secondary = false) {
   for (const [id, value] of Object.entries(table)) {
     if (value === name) return Number(id);
   }
-  return Number(name || 0);
+  return Number(name);
 }
 
 function msytColorToEditorName(colour) {
@@ -388,7 +388,7 @@ function readMsytByteWord(bytes, offset = 0) {
   return (((Number(bytes?.[offset] || 0) & 0xff) << 8) | (Number(bytes?.[offset + 1] || 0) & 0xff)) & 0xffff;
 }
 function msytByteWord(value) {
-  const v = Number(value || 0) & 0xffff;
+  const v = Number(value) & 0xffff;
   return [(v >>> 8) & 0xff, v & 0xff];
 }
 function appendMsytUnknownPairs(words, value) {
@@ -460,19 +460,19 @@ function msytFiveFlagsArgs(control) {
 function buildMsytChoiceByFlagsControl(args) {
   const field_1 = [];
   const unknown_1 = [];
-  const varType = Number(args.varType || 0) & 0xffff;
-  const flag1 = String(args.flag1 || "");
+  const varType = Number(args.varType) & 0xffff;
+  const flag1 = String(args.flag1);
   if (varType === 0xffff && flag1 === "") {
     unknown_1.push([255, 255, 0, 0]);
   } else {
     field_1.push(varType);
     pushMsytWordString(field_1, flag1);
   }
-  field_1.push(Number(args.choice1 || 0) & 0xffff);
+  field_1.push(Number(args.choice1) & 0xffff);
   pushMsytWordString(field_1, args.flag2);
-  field_1.push(Number(args.choice2 || 0) & 0xffff);
+  field_1.push(Number(args.choice2) & 0xffff);
   pushMsytWordString(field_1, args.flag3);
-  field_1.push(Number(args.choice3 || 0) & 0xffff);
+  field_1.push(Number(args.choice3) & 0xffff);
   return {
     kind: "raw",
     one: {
@@ -498,11 +498,11 @@ function readMsytStringEntry(words, cursor) {
 function buildMsytFiveFlagsControl(args) {
   const words = [];
   for (let i = 1; i <= 5; i++) {
-    words.push(Number(args[`flagIdx${i}`] || 0) & 0xffff);
+    words.push(Number(args[`flagIdx${i}`]) & 0xffff);
     pushMsytWordString(words, args[`name${i}`]);
   }
   for (let i = 1; i <= 3; i++) {
-    words.push(Number(args[`slot${i}`] || 0) & 0xffff, Number(args[`cond${i}`] || 0) & 0xffff);
+    words.push(Number(args[`slot${i}`]) & 0xffff, Number(args[`cond${i}`]) & 0xffff);
   }
 
   let unknown_1 = null;
@@ -1155,7 +1155,7 @@ function tryParseMsytControlFromRaw(rawTag) {
       four: {
         zero: {
           field_1: 10,
-          string: String(args.asset || "")
+          string: String(args.asset)
         }
       }
     };
@@ -1174,7 +1174,7 @@ function tryParseMsytControlFromRaw(rawTag) {
     return {
       kind: "localisation",
       localisation_kind: "plural",
-      options: [String(args.arg1 || ""), String(args.arg2 || ""), String(args.arg3 || "")]
+      options: [String(args.arg1), String(args.arg2), String(args.arg3)]
     };
   }
   if (name === "wordInfo") {
@@ -1186,10 +1186,10 @@ function tryParseMsytControlFromRaw(rawTag) {
           {
             len: 4,
             field_2: [
-              Number(args.gender ?? 0),
-              Number(args.defArticle ?? 255),
-              Number(args.indefArticle ?? 255),
-              String(args.isPlural || "").toLowerCase() === "true" ? 1 : 0
+              Number(args.gender),
+              Number(args.defArticle),
+              Number(args.indefArticle),
+              String(args.isPlural).toLowerCase() === "true" ? 1 : 0
             ]
           }
         ]
@@ -1197,7 +1197,7 @@ function tryParseMsytControlFromRaw(rawTag) {
     };
   }
   if (name === "color") {
-    const id = args.id || "-1";
+    const id = args.id;
     if (id === "Default" || id === "-1") return { kind: "reset_colour" };
     const editorName = getColorNameById("BotW", id);
     const colour = editorColorToMsyt(editorName);
@@ -1207,23 +1207,23 @@ function tryParseMsytControlFromRaw(rawTag) {
   if (/^choice[234]$/.test(name)) {
     const count = Number(name.slice(-1));
     const choice_labels = [];
-    for (let i = 1; i <= count; i++) choice_labels.push(Number(args[`label${i}`] || 0));
+    for (let i = 1; i <= count; i++) choice_labels.push(Number(args[`label${i}`]));
     return {
       kind: "choice",
       choice_labels,
-      selected_index: Number(args.selectedIndex ?? 0),
-      cancel_index: Number(args.cancelIndex ?? 0),
+      selected_index: Number(args.selectedIndex),
+      cancel_index: Number(args.cancelIndex),
       unknown: msytChoiceUnknownDefault(count)
     };
   }
   if (name === "choiceByFlags") return buildMsytChoiceByFlagsControl(args);
   if (name === "fiveFlags") return buildMsytFiveFlagsControl(args);
-  if (name === "singleChoice") return { kind: "single_choice", label: Number(args.label || 0) };
+  if (name === "singleChoice") return { kind: "single_choice", label: Number(args.label) };
   if (MSYT_TAG_TO_VARIABLE_KIND[name] != null) {
     const control = {
       kind: "variable",
       variable_kind: MSYT_TAG_TO_VARIABLE_KIND[name],
-      name: String(args.ref || "")
+      name: String(args.ref)
     };
     if (args.index != null && args.index !== "" && Number(args.index) !== 0) {
       control.index = Number(args.index);
@@ -1231,17 +1231,17 @@ function tryParseMsytControlFromRaw(rawTag) {
     return control;
   }
   if (name === "icon") {
-    const mapped = BOTW_ICON_ID_TO_NAME[Number(args.type || 0)];
-    const icon = editorValueToMsytIcon(mapped || String(args.type || 0));
+    const mapped = BOTW_ICON_ID_TO_NAME[Number(args.type)];
+    const icon = editorValueToMsytIcon(mapped || String(args.type));
     if (icon != null) return { kind: "icon", icon };
   }
-  if (name === "size") return { kind: "text_size", percent: Number(args.value || 100) };
-  if (name === "animation") return { kind: "animation", name: args.name || "" };
-  if (name === "font") return { kind: "font", font_kind: (args.face || "Normal") === "Hylian" ? "hylian" : "normal" };
+  if (name === "size") return { kind: "text_size", percent: Number(args.value) };
+  if (name === "animation") return { kind: "animation", name: args.name };
+  if (name === "font") return { kind: "font", font_kind: args.face === "Hylian" ? "hylian" : "normal" };
   if (name === "setEmotion") {
     return {
       kind: "sound",
-      unknown: [mapEmotionIdByName(args.emotion, false), Number(args.variant || 0)]
+      unknown: [mapEmotionIdByName(args.emotion, false), Number(args.variant)]
     };
   }
   if (name === "setEmotion2") {
@@ -1251,16 +1251,16 @@ function tryParseMsytControlFromRaw(rawTag) {
     };
   }
   if (name === "autoAdvance") {
-    const lo = Number(args.framesLo || 0) & 0xffff;
-    const hi = Number(args.framesHi || 0) & 0xffff;
+    const lo = Number(args.framesLo) & 0xffff;
+    const hi = Number(args.framesHi) & 0xffff;
     return { kind: "auto_advance", frames: Math.max(lo, hi) }; // can get the wrong frame count when converting from AEON to MSYT because of framesLo/framesHi handling, if either value is not 0?
   }
   if (name === "delay8") return { kind: "pause", length: "short" };
   if (name === "delay15") return { kind: "pause", length: "long" };
   if (name === "delay30") return { kind: "pause", length: "longer" };
   if (name === "delay") {
-    const lo = Number(args.framesLo || 0) & 0xffff;
-    const hi = Number(args.framesHi || 0) & 0xffff;
+    const lo = Number(args.framesLo) & 0xffff;
+    const hi = Number(args.framesHi) & 0xffff;
     return { kind: "pause", frames: Math.max(lo, hi) }; // can get the wrong frame count when converting from AEON to MSYT because of framesLo/framesHi handling, if either value is not 0?
   }
   return null;
