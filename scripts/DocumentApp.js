@@ -629,13 +629,30 @@ function getRedoStack(content) {
   return _redoStacks.get(content);
 }
 
+// Capture raw text plus visible caret/bias so custom undo/redo can restore selection after re-render.
+function makeUndoState(content, raw = content.dataset.raw ?? serializeContent(content)) {
+  const selection = getSelection();
+  let caret = rawToPlainText(raw).length;
+  let bias = content._nextInputCollapsedBias || "after";
+  if (selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    if (content.contains(range.startContainer) && content.contains(range.endContainer)) {
+      const { startOff } = getSelectionTextOffsets(content, range);
+      caret = startOff;
+      bias = inferCollapsedCaretBias(content, range, bias);
+    }
+  }
+  return { raw, caret, bias };
+}
+
 function saveUndo(content) {
   // Undo stores raw bubble text, not browser DOM history.
   if (!content?.classList?.contains("bubble-content")) return;
   const raw = content.dataset.raw ?? serializeContent(content);
   const stack = getUndoStack(content);
-  if (stack[stack.length - 1] === raw) return;
-  stack.push(raw);
+  const last = stack[stack.length - 1];
+  if ((typeof last === "string" ? last : last?.raw) === raw) return;
+  stack.push(makeUndoState(content, raw));
   getRedoStack(content).length = 0;
 }
 
@@ -1852,9 +1869,14 @@ export default class DocumentApp {
   }
 
   // Re-render one bubble from a raw undo/redo snapshot.
-  restoreUndoState(content, raw) {
+  restoreUndoState(content, state) {
+    const raw = typeof state === "string" ? state : state.raw;
     renderRawToContent(content, raw);
     content.dataset.raw = raw;
+    content.focus();
+    if (typeof state !== "string") {
+      this.setCaretAtVisibleOffset(content, Math.min(state.caret, rawToPlainText(raw).length), state.bias || "after");
+    }
     const bubbleRecord = this.findBubbleByContent(content);
     if (!bubbleRecord) return;
     this.syncMetaBar(bubbleRecord);
@@ -1867,7 +1889,7 @@ export default class DocumentApp {
     const stack = getUndoStack(content);
     if (!stack.length) return;
     const current = content.dataset.raw ?? serializeContent(content);
-    getRedoStack(content).push(current);
+    getRedoStack(content).push(makeUndoState(content, current));
     this.restoreUndoState(content, stack.pop());
   }
 
@@ -1876,7 +1898,7 @@ export default class DocumentApp {
     const stack = getRedoStack(content);
     if (!stack.length) return;
     const current = content.dataset.raw ?? serializeContent(content);
-    getUndoStack(content).push(current);
+    getUndoStack(content).push(makeUndoState(content, current));
     this.restoreUndoState(content, stack.pop());
   }
 
