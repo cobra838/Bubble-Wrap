@@ -2060,7 +2060,6 @@ export default class DocumentApp {
     content.addEventListener("blur", () => {
       ensureEditableStructure(content);
       content._pendingInputEdit = null;
-      renderRawToContent(content, content.dataset.raw ?? serializeContent(content));
       fmtPopup.classList.remove("show");
     });
     content.addEventListener("input", () => {
