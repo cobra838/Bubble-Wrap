@@ -13,13 +13,13 @@
 @font-face {
   font-family: "Calamity";
   font-weight: bold;
-  src: url(../assets/fonts/Calamity-Bold.woff2) format("woff2");
+  src: url(../assets/fonts/ninP_RodinNTLG-B_DH_003_subset.bfotf-italic_84.woff2) format("woff2");
 }
 
 @font-face {
   font-family: "Calamity";
   font-weight: normal;
-  src: url(../assets/fonts/Calamity-Regular.woff2) format("woff2");
+  src: url(../assets/fonts/ninP_RodinNTLG-M_DH_003_subset.bfotf-italic_84.woff2) format("woff2");
 }
 
 :root {
