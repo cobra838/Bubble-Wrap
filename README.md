@@ -2,6 +2,15 @@
 
 A visual text bubble editor for _The Legend of Zelda: Breath of the Wild_ and _The Legend of Zelda: Tears of the Kingdom_.
 
+##  Supported Tools
+
+[TOTK-MSBT-Converter](https://github.com/cobra838/TOTK-MSBT-Converter) (BOTW, TOTK)
+
+[MSBT Editor v2.9.6](https://gitlab.com/AeonSake/msbt-editor/-/releases/2.9.6) (BOTW, TOTK)
+
+[msyt-tools v1.1.1](https://github.com/polarbunny/msyt-tools/releases/tag/v1.1.1) (BOTW)
+
+
 ## Features
 
 ### Automatic text wrapping

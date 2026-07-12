@@ -46,6 +46,10 @@ const BOTW_MSYT_GCF_TAG_NAMES = new Set([
   "lowercaseNextWord"
 ]);
 
+// TODO: "ruby"
+// Also: "batchimObject", "batchimDirection"
+
+
 const MSYT_VARIABLE_KIND_TO_TAG = {
   1: "string1",
   2: "number2",
