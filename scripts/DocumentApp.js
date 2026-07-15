@@ -144,6 +144,21 @@ function parseAeonYaml(text) {
   return { entries, yamlMeta };
 }
 
+// Parse a document only for comparison; it must not change the active editor state.
+function parseCompareDocument(text) {
+  const normalized = normalizeNewlines(text);
+  const trimmed = normalized.trimStart();
+  if (!trimmed) return { entries: [] };
+  if (trimmed.startsWith("{")) return parseMsytBcmlJson(normalized);
+  if (/^(?:---\n)?(?:\s*group_count:|\s*entries:)/m.test(trimmed)) return parseMsytYaml(normalized);
+  return parseAeonYaml(normalized);
+}
+
+// Normalize one entry's raw string before comparing source files.
+function compareEntryRaw(entry) {
+  return normalizeNewlines(entry?.content ?? "");
+}
+
 // Provide a safe default status text.
 function makeStatus(text) {
   return text || "Ready";
@@ -677,6 +692,12 @@ export default class DocumentApp {
     this.surfaceDragSelection = null;
     this.activeContent = null;
     this.documentRenderId = 0;
+    this.compareState = null;
+    this.pendingCompareFiles = [];
+    this.compareFilesPerGroup = 2;
+    this.compareGroupCount = 1;
+    this.compareLayout = "unified";
+    this.activeCompareIssues = null;
     this.autoSplit = localStorage.getItem("msbt_autosplit") !== "0";
 
     this.sidebar = document.getElementById("sidebar");
@@ -705,6 +726,18 @@ export default class DocumentApp {
     this.btnExpMsyt = document.getElementById("btn-exp-msyt");
     this.btnExpBcml = document.getElementById("btn-exp-bcml");
     this.exportBtn = document.getElementById("btn-export");
+    this.compareBtn = document.getElementById("btn-compare");
+    this.compareFileInput = document.getElementById("compare-file-input");
+    this.compareMenu = document.getElementById("compare-menu");
+    this.compareFilesPerGroupInput = document.getElementById("compare-files-per-group");
+    this.compareGroupCountInput = document.getElementById("compare-group-count");
+    this.compareMenuNote = document.getElementById("compare-menu-note");
+    this.compareMenuStart = document.getElementById("compare-menu-start");
+    this.compareModal = document.getElementById("compare-modal");
+    this.compareTitle = document.getElementById("compare-title");
+    this.compareBody = document.getElementById("compare-body");
+    this.compareLayoutUnified = document.getElementById("compare-layout-unified");
+    this.compareLayoutSplit = document.getElementById("compare-layout-split");
     this.metaBtn = document.getElementById("btn-meta");
     this.btnTag = document.getElementById("btn-tag");
     this.btnAutosplit = document.getElementById("btn-autosplit");
@@ -726,6 +759,13 @@ export default class DocumentApp {
   // Wire global UI and document-level event handlers.
   bindEvents() {
     this.fileInput.addEventListener("change", (event) => this.handleFileInput(event));
+    this.compareFileInput.addEventListener("change", (event) => this.handleCompareFileInput(event));
+    this.compareFilesPerGroupInput.addEventListener("input", () => this.syncCompareMenu());
+    this.compareGroupCountInput.addEventListener("input", () => this.syncCompareMenu());
+    this.compareMenuStart.addEventListener("click", () => this.startCompareFromMenu());
+    document.addEventListener("mousedown", (event) => {
+      if (!event.target.closest("#compare-menu") && event.target !== this.compareBtn) this.closeCompareMenu();
+    });
     this.metaTextarea.addEventListener("input", () => {
       if (this.currentDocMode === DOC_MODE_AEON) this.yamlMeta = this.metaTextarea.value;
     });
@@ -794,6 +834,7 @@ export default class DocumentApp {
       if (event.key === "Escape") {
         this.surfaceDragSelection = null;
         this.closeTP();
+        this.closeCompare();
         this.closeRaw();
         this.closeTE();
         this.closeCtx();
@@ -806,6 +847,10 @@ export default class DocumentApp {
     window.selectGame = (game) => this.selectGame(game);
     window.setExportMode = (mode) => this.setExportMode(mode);
     window.exportYaml = () => this.exportDocument();
+    window.startCompare = () => this.startCompare();
+    window.openCompareMenu = (event) => this.openCompareMenu(event);
+    window.closeCompare = () => this.closeCompare();
+    window.setCompareLayout = (layout) => this.setCompareLayout(layout);
     window.toggleMeta = () => this.metaPanel.classList.toggle("open");
     window.openTP = () => this.openTP();
     window.closeTP = () => this.closeTP();
@@ -1151,6 +1196,419 @@ export default class DocumentApp {
     this.statusbar.textContent = makeStatus(text);
   }
 
+  // Start comparison with the most recently selected settings.
+  startCompare() {
+    this.startCompareWithOptions(this.compareFilesPerGroup, this.compareGroupCount);
+  }
+
+  // Open the Compare settings on right click.
+  openCompareMenu(event) {
+    event.preventDefault();
+    this.compareMenu.style.left = `${event.clientX}px`;
+    this.compareMenu.style.top = `${event.clientY}px`;
+    this.compareMenu.classList.add("open");
+    this.syncCompareMenu();
+  }
+
+  // Close the Compare settings popup.
+  closeCompareMenu() {
+    this.compareMenu.classList.remove("open");
+  }
+
+  // Clamp and describe the selected Compare settings.
+  syncCompareMenu() {
+    const filesPerGroup = Math.max(1, Math.floor(Number(this.compareFilesPerGroupInput.value) || 1));
+    const groupCount = Math.max(1, Math.floor(Number(this.compareGroupCountInput.value) || 1));
+    this.compareFilesPerGroupInput.value = String(filesPerGroup);
+    this.compareGroupCountInput.value = String(groupCount);
+    const totalFiles = filesPerGroup === 1 ? groupCount : filesPerGroup * groupCount;
+    this.compareMenuNote.textContent =
+      filesPerGroup === 1
+        ? `${totalFiles} file(s): each is compared with the current document.`
+        : `${totalFiles} file(s) will be chosen one by one.`;
+  }
+
+  // Apply the settings from the Compare popup.
+  startCompareFromMenu() {
+    this.syncCompareMenu();
+    this.startCompareWithOptions(Number(this.compareFilesPerGroupInput.value), Number(this.compareGroupCountInput.value));
+  }
+
+  // Ask for every source file in a stable order.
+  startCompareWithOptions(filesPerGroup, groupCount) {
+    this.closeCompareMenu();
+    this.compareFilesPerGroup = filesPerGroup;
+    this.compareGroupCount = groupCount;
+    this.pendingCompareFiles = [];
+    this.compareFileInput.value = "";
+    this.requestNextCompareFile();
+  }
+
+  // Request the next source file; mode 1 uses the current document as the first file.
+  requestNextCompareFile() {
+    const totalFiles = this.compareFilesPerGroup === 1 ? this.compareGroupCount : this.compareFilesPerGroup * this.compareGroupCount;
+    const next = this.pendingCompareFiles.length + 1;
+    if (next > totalFiles) {
+      this.applyCompareFiles(this.pendingCompareFiles);
+      return;
+    }
+    this.setStatus(`Choose comparison file ${next} of ${totalFiles}`);
+    this.compareFileInput.value = "";
+    this.compareFileInput.click();
+  }
+
+  // Read a selected source file without touching the active document.
+  async handleCompareFileInput(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      this.pendingCompareFiles.push({ name: file.name, text: await file.text() });
+      this.requestNextCompareFile();
+    } catch (error) {
+      window.alert(`Error: ${error.message}`);
+      this.setStatus("Compare failed");
+    }
+  }
+
+  // Build a source document from the document currently open in Bubble Wrap.
+  getCurrentCompareFile() {
+    return {
+      name: "Current document",
+      entries: this.chains.map((chain) => ({
+        label: chain.labelInput.value,
+        content: this.serializeChainRaw(chain),
+        docKey: chain.docKey
+      }))
+    };
+  }
+
+  // Use locale/path-aware keys where MSYT supplied them; otherwise labels are the key.
+  getCompareEntryKey(entry) {
+    return entry?.docKey || entry?.label || "";
+  }
+
+  // Build one comparison group from two or more documents.
+  buildCompareGroup(files, index) {
+    const documents = files.map((file) => ({
+      name: file.name,
+      entries: file.entries || parseCompareDocument(file.text).entries || []
+    }));
+    const entryMaps = documents.map((document) => {
+      const map = new Map();
+      document.entries.forEach((entry, entryIndex) => {
+        const key = this.getCompareEntryKey(entry);
+        if (!map.has(key)) map.set(key, { key, label: entry.label, raw: compareEntryRaw(entry), index: entryIndex });
+      });
+      return map;
+    });
+    const allKeys = new Set(entryMaps.flatMap((map) => [...map.keys()]));
+    const issuesByKey = new Map();
+    const changedByKey = new Map();
+    const newLabels = [];
+    const currentKeys = new Set(this.chains.map((chain) => chain.docKey || chain.labelInput.value));
+
+    allKeys.forEach((key) => {
+      const versions = entryMaps.map((map, fileIndex) => {
+        const entry = map.get(key);
+        return { name: documents[fileIndex].name, raw: entry?.raw ?? null };
+      });
+      const changed = versions.some((version, versionIndex) => versionIndex && version.raw !== versions[versionIndex - 1].raw);
+      const firstEntry = entryMaps[0].get(key);
+      const lastEntry = [...entryMaps].reverse().map((map) => map.get(key)).find(Boolean) || firstEntry;
+      const issue = { type: changed ? (firstEntry ? "changed" : "new") : "unchanged", key, label: lastEntry?.label || key, versions, groupIndex: index };
+      issuesByKey.set(key, issue);
+      if (!changed) return;
+      if (firstEntry) changedByKey.set(key, issue);
+      else {
+        const lastEntries = documents[documents.length - 1].entries;
+        const lastIndex = lastEntries.findIndex((entry) => this.getCompareEntryKey(entry) === key);
+        newLabels.push({
+          ...issue,
+          afterLabel: this.findNearestCompareLabel(lastEntries, lastIndex, currentKeys, -1),
+          beforeLabel: this.findNearestCompareLabel(lastEntries, lastIndex, currentKeys, 1)
+        });
+      }
+    });
+    return { files: documents, issuesByKey, changedByKey, newLabels };
+  }
+
+  // Build all independent comparison groups.
+  applyCompareFiles(files) {
+    try {
+      const groups = [];
+      let cursor = 0;
+      for (let index = 0; index < this.compareGroupCount; index++) {
+        const groupFiles =
+          this.compareFilesPerGroup === 1
+            ? [files[cursor++], this.getCurrentCompareFile()]
+            : files.slice(cursor, (cursor += this.compareFilesPerGroup));
+        groups.push(this.buildCompareGroup(groupFiles, index));
+      }
+      this.compareState = { groups };
+      this.renderCompareOverlay();
+      const changed = groups.reduce((total, group) => total + group.changedByKey.size, 0);
+      const added = groups.reduce((total, group) => total + group.newLabels.length, 0);
+      this.setStatus(`Compare: ${changed} changed, ${added} new`);
+    } catch (error) {
+      window.alert(`Error: ${error.message}`);
+      this.setStatus("Compare failed");
+    }
+  }
+
+  // Find nearby labels that are also present in the current document.
+  findNearestCompareLabel(entries, index, currentKeys, direction) {
+    for (let cursor = index + direction; cursor >= 0 && cursor < entries.length; cursor += direction) {
+      const entry = entries[cursor];
+      if (currentKeys.has(this.getCompareEntryKey(entry))) return entry.label;
+    }
+    return "";
+  }
+
+  // Refresh all compare markers and the bottom "new labels" queue.
+  renderCompareOverlay() {
+    this.chains.forEach((chain) => this.updateSidebarItem(chain));
+    this.renderCompareNewLabels();
+  }
+
+  // Attach all comparison issues for a chain based on its document key.
+  updateCompareIssueForChain(chain) {
+    const key = chain.docKey || chain.labelInput.value;
+    chain.compareIssues = (this.compareState?.groups || []).map((group) => group.issuesByKey.get(key)).filter(Boolean);
+    chain.compareIssue = chain.compareIssues.find((issue) => issue.type !== "unchanged") || null;
+  }
+
+  // Render new labels separately so the current document order is not changed automatically.
+  renderCompareNewLabels() {
+    this.chainList.querySelector(".compare-new-section")?.remove();
+    const groups = (this.compareState?.groups || []).filter((group) => group.newLabels.length);
+    if (!groups.length) return;
+
+    const section = document.createElement("section");
+    section.className = "compare-new-section";
+    section.innerHTML = `<div class="compare-new-title">New labels</div>`;
+
+    groups.forEach((group) => {
+      if (groups.length > 1) {
+        const title = document.createElement("div");
+        title.className = "compare-new-group-title";
+        title.textContent = `Comparison ${group.newLabels[0].groupIndex + 1}`;
+        section.appendChild(title);
+      }
+      group.newLabels.forEach((issue) => {
+        const item = document.createElement("div");
+        item.className = "compare-new-item";
+        const context = [
+          issue.afterLabel ? `after ${issue.afterLabel}` : "",
+          issue.beforeLabel ? `before ${issue.beforeLabel}` : ""
+        ]
+          .filter(Boolean)
+          .join(", ");
+        item.innerHTML = `
+          <div>
+            <div class="compare-new-label">${escapeHtml(issue.label)}</div>
+            <div class="compare-new-context">${escapeHtml(context || "No nearby existing label")}</div>
+          </div>
+          <div class="compare-new-actions">
+            <button type="button" class="tbtn compare-view">View</button>
+            <button type="button" class="tbtn compare-add">Add Entry</button>
+          </div>
+        `;
+        item.querySelector(".compare-view").addEventListener("click", () => this.openCompareIssue(issue));
+        item.querySelector(".compare-add").addEventListener("click", () => this.addCompareNewEntry(issue));
+        section.appendChild(item);
+      });
+    });
+
+    const addButton = this.chainList.querySelector("#add-chain-btn");
+    if (addButton) this.chainList.insertBefore(section, addButton);
+    else this.chainList.appendChild(section);
+  }
+
+  // Add a new mod label at the bottom only when the user explicitly asks.
+  addCompareNewEntry(issue) {
+    const latest = [...issue.versions].reverse().find((version) => version.raw != null);
+    const chain = this.createChain({
+      ...this.makeNewEntry(),
+      label: issue.label,
+      content: latest?.raw || ""
+    });
+    const group = this.compareState?.groups?.[issue.groupIndex];
+    if (group) {
+      group.newLabels = group.newLabels.filter((item) => item.key !== issue.key);
+      this.renderCompareNewLabels();
+    }
+    chain.section.scrollIntoView({ behavior: "smooth", block: "start" });
+    this.setStatus(`Added new label: ${issue.label}`);
+  }
+
+  // Open a compare issue from either a changed chain or a new-label item.
+  openCompareIssue(target) {
+    const issue = target?.compareIssue || target;
+    if (!issue) return;
+    const issues = target?.compareIssues || (this.compareState?.groups || []).map((group) => group.issuesByKey.get(issue.key)).filter(Boolean);
+    if (!issues.length) return;
+    const currentRaw = target?.bubbles ? this.serializeChainRaw(target) : "";
+    this.activeCompareIssues = issues.map((item) => ({ ...item, currentRaw }));
+    this.compareModal.classList.add("open");
+    this.renderCompareModal();
+  }
+
+  // Close the compare modal.
+  closeCompare() {
+    this.compareModal.classList.remove("open");
+    this.activeCompareIssues = null;
+  }
+
+  // Switch compare modal layout.
+  setCompareLayout(layout) {
+    this.compareLayout = layout === "split" ? "split" : "unified";
+    this.compareLayoutUnified.classList.toggle("active", this.compareLayout === "unified");
+    this.compareLayoutSplit.classList.toggle("active", this.compareLayout === "split");
+    this.renderCompareModal();
+  }
+
+  // Repaint every comparison group for the active label.
+  renderCompareModal() {
+    const issues = this.activeCompareIssues;
+    if (!issues?.length) return;
+    this.compareTitle.textContent = `Compare label: ${issues[0].label}`;
+    const groups = issues.map((issue) => {
+      const versions = issue.versions || [];
+      const meta = `<div class="compare-meta">${versions.map((version) => escapeHtml(version.name)).join(" → ")}</div>`;
+      const stages = [];
+      for (let index = 1; index < versions.length; index++) {
+        const before = versions[index - 1];
+        const after = versions[index];
+        const heading = versions.length > 2 ? `<div class="compare-stage-title">${escapeHtml(before.name)} → ${escapeHtml(after.name)}</div>` : "";
+        const diff =
+          this.compareLayout === "split"
+            ? this.buildSplitDiffHtml(before.raw ?? "", after.raw ?? "", before.name, after.name)
+            : `<div class="compare-unified">${this.buildUnifiedDiffHtml(before.raw ?? "", after.raw ?? "")}</div>`;
+        stages.push(`<section class="compare-stage">${heading}${diff}</section>`);
+      }
+      const title = this.compareState?.groups?.length > 1 ? `<h4 class="compare-group-title">Comparison ${issue.groupIndex + 1}</h4>` : "";
+      return `<section class="compare-group">${title}${meta}${stages.join("")}</section>`;
+    });
+    const currentRaw = issues[0].currentRaw;
+    this.compareBody.innerHTML = `${groups.join("")}${
+      currentRaw ? `<div class="compare-pane" style="margin-top:12px"><div class="compare-pane-title">Current document</div><pre>${escapeHtml(currentRaw)}</pre></div>` : ""
+    }`;
+  }
+
+  // Build line-level diff rows once so Unified and Split stay visually consistent.
+  buildDiffRows(oldRaw, newRaw) {
+    const oldLines = String(oldRaw || "").split("\n");
+    const newLines = String(newRaw || "").split("\n");
+    const dp = Array.from({ length: oldLines.length + 1 }, () => Array(newLines.length + 1).fill(0));
+    for (let i = oldLines.length - 1; i >= 0; i--) {
+      for (let j = newLines.length - 1; j >= 0; j--) {
+        dp[i][j] = oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const rows = [];
+    let i = 0;
+    let j = 0;
+    while (i < oldLines.length || j < newLines.length) {
+      if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
+        rows.push({ type: "same", line: oldLines[i] });
+        i++;
+        j++;
+        continue;
+      }
+      if (j >= newLines.length || (i < oldLines.length && dp[i + 1][j] >= dp[i][j + 1])) {
+        rows.push({ type: "del", line: oldLines[i] });
+        i++;
+      } else {
+        rows.push({ type: "add", line: newLines[j] });
+        j++;
+      }
+    }
+    return rows;
+  }
+
+  // Highlight the changed span inside a changed line pair.
+  highlightChangedText(line, otherLine, type) {
+    const value = String(line ?? "");
+    const other = String(otherLine ?? "");
+    let prefix = 0;
+    while (prefix < value.length && prefix < other.length && value[prefix] === other[prefix]) prefix++;
+    let suffix = 0;
+    while (
+      suffix < value.length - prefix &&
+      suffix < other.length - prefix &&
+      value[value.length - 1 - suffix] === other[other.length - 1 - suffix]
+    ) {
+      suffix++;
+    }
+    const changedEnd = suffix ? value.length - suffix : value.length;
+    const before = escapeHtml(value.slice(0, prefix));
+    const changed = escapeHtml(value.slice(prefix, changedEnd));
+    const after = escapeHtml(value.slice(changedEnd));
+    if (!changed) return `${before}${after}`;
+    return `${before}<span class="compare-chunk ${type}">${changed}</span>${after}`;
+  }
+
+  // Render one diff row, optionally with a paired opposite row for intra-line highlighting.
+  buildDiffLineHtml(row, pairedRow = null) {
+    const marker = row.type === "add" ? "+" : row.type === "del" ? "-" : " ";
+    const line =
+      pairedRow && row.type !== "same" ? this.highlightChangedText(row.line, pairedRow.line, row.type) : escapeHtml(row.line ?? "");
+    return `<div class="compare-line ${row.type}"><span class="compare-marker">${marker}</span><span class="compare-line-text">${line}</span></div>`;
+  }
+
+  // Build a compact unified diff for review.
+  buildUnifiedDiffHtml(oldRaw, newRaw) {
+    const rows = this.buildDiffRows(oldRaw, newRaw);
+    const html = [];
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      const next = rows[index + 1];
+      if (row.type === "del" && next?.type === "add") {
+        html.push(this.buildDiffLineHtml(row, next));
+        html.push(this.buildDiffLineHtml(next, row));
+        index++;
+        continue;
+      }
+      html.push(this.buildDiffLineHtml(row));
+    }
+    return html.join("");
+  }
+
+  // Build split diff panes with the same coloring as Unified.
+  buildSplitDiffHtml(oldRaw, newRaw, oldTitle = "Original", newTitle = "Modified") {
+    const rows = this.buildDiffRows(oldRaw, newRaw);
+    const oldHtml = [];
+    const newHtml = [];
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      const next = rows[index + 1];
+      if (row.type === "del" && next?.type === "add") {
+        oldHtml.push(this.buildDiffLineHtml(row, next));
+        newHtml.push(this.buildDiffLineHtml(next, row));
+        index++;
+        continue;
+      }
+      if (row.type === "same") {
+        oldHtml.push(this.buildDiffLineHtml(row));
+        newHtml.push(this.buildDiffLineHtml(row));
+      } else if (row.type === "del") {
+        oldHtml.push(this.buildDiffLineHtml(row));
+      } else {
+        newHtml.push(this.buildDiffLineHtml(row));
+      }
+    }
+    return `<div class="compare-split">
+      <div class="compare-pane">
+        <div class="compare-pane-title">${escapeHtml(oldTitle)}</div>
+        <div class="compare-pane-lines">${oldHtml.join("") || this.buildDiffLineHtml({ type: "same", line: "(missing)" })}</div>
+      </div>
+      <div class="compare-pane">
+        <div class="compare-pane-title">${escapeHtml(newTitle)}</div>
+        <div class="compare-pane-lines">${newHtml.join("") || this.buildDiffLineHtml({ type: "same", line: "(empty)" })}</div>
+      </div>
+    </div>`;
+  }
+
   // Build a fresh empty entry object.
   makeNewEntry() {
     return defaultEntry(this.currentDocMode, this.msytDocInfo);
@@ -1188,6 +1646,10 @@ export default class DocumentApp {
   loadText(text) {
     const normalized = normalizeNewlines(text);
     const trimmed = normalized.trimStart();
+
+    this.compareState = null;
+    this.pendingCompareFiles = [];
+    this.closeCompare();
 
     // Aeon
     if (!trimmed) {
@@ -1358,9 +1820,16 @@ export default class DocumentApp {
 
   // Sync sidebar text for one entry.
   updateSidebarItem(chain) {
+    this.updateCompareIssueForChain(chain);
     chain.sidebarItem.querySelector(".sb-label").textContent = chain.labelInput.value || "";
     chain.sidebarItem.querySelector(".sb-attr").textContent = chain.attrInput.value || "";
     chain.sidebarItem.classList.toggle("is-choice", isChoiceLabel(chain.labelInput.value));
+    chain.sidebarItem.classList.toggle("has-compare-issue", !!chain.compareIssue);
+    chain.sidebarItem.title = chain.compareIssue ? "Changed in modified file" : "";
+    if (chain.compareButton) {
+      chain.compareButton.hidden = !chain.compareIssue;
+      chain.compareButton.title = chain.compareIssue ? `Show diff: ${chain.compareIssue.label}` : "Show diff";
+    }
   }
 
   // Refresh per-chain UI that depends on the current mode.
@@ -1582,6 +2051,7 @@ export default class DocumentApp {
     const header = document.createElement("div");
     header.className = "chain-hdr";
     header.innerHTML = `
+      <button type="button" class="compare-alert" title="Show diff" hidden>!</button>
       <input class="chain-label" placeholder="label" value="${escapeHtml(entry.label || "")}">
       <input class="chain-attr" placeholder="${escapeHtml(entry.attrKey || "attributeText")}" value="${escapeHtml(entry.attrVal || "")}">
       <select class="type-sel"></select>
@@ -1589,6 +2059,7 @@ export default class DocumentApp {
     `;
     section.appendChild(header);
 
+    const compareButton = header.querySelector(".compare-alert");
     const labelInput = header.querySelector(".chain-label");
     const attrInput = header.querySelector(".chain-attr");
     const typeSelect = header.querySelector(".type-sel");
@@ -1618,10 +2089,12 @@ export default class DocumentApp {
       labelInput,
       attrInput,
       typeSelect,
+      compareButton,
       sidebarItem,
       bubbles: [],
       attrKey: entry.attrKey || (this.currentDocMode === DOC_MODE_AEON ? "attributeText" : "attributes"),
       msytHasAttributes: !!entry.msytHasAttributes,
+      docKey: entry.docKey || null,
       ...(isBcml
         ? {
             bcmlLocale: entry.bcmlLocale,
@@ -1649,6 +2122,7 @@ export default class DocumentApp {
       this.doSearch(this.searchInput.value);
     });
     typeSelect.addEventListener("change", () => this.applyChainType(chain, typeSelect.value));
+    compareButton.addEventListener("click", () => this.openCompareIssue(chain));
     deleteBtn.addEventListener("click", () => this.deleteChain(chain));
 
     const pages = splitPages(entry.content);
