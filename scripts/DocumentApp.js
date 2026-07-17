@@ -1281,6 +1281,16 @@ export default class DocumentApp {
     }
     entries.forEach((entry) => this.createChain(entry));
     this.syncEntryUi();
+    this.refreshBubbleOverflowsAfterFonts();
+  }
+
+  // Refresh rendered widths after import once the dialogue font is ready for scrollWidth.
+  refreshBubbleOverflowsAfterFonts() {
+    document.fonts?.ready?.then(() => {
+      this.chains.forEach((chain) => {
+        chain.bubbles.forEach((bubble) => this.updateBubbleOverflow(bubble, chain.typeSelect.value));
+      });
+    });
   }
 
   // Append the bottom "Create Entry" button.
@@ -2360,7 +2370,7 @@ export default class DocumentApp {
       const color = tagColor(tag.name);
       chip.style.borderColor = color;
       chip.style.color = color;
-      if (tag.name.startsWith("setEmotion")) chip.textContent = String(tag.args.emotion || "?").replace("_Face", "");
+      if (tag.name.startsWith("setEmotion")) chip.textContent = String(tag.args.emotion || "?");
       else if (tag.name === "setVoice") chip.textContent = `🔊 ${tag.args.asset || "?"}`;
       else if (tag.name === "animation") chip.textContent = `🎬 ${tag.args.name || "?"}`;
       else chip.textContent = tagSummary(tag.rawTag);
@@ -2387,7 +2397,7 @@ export default class DocumentApp {
       lineCount += block.getClientRects().length;
     }
     content.classList.remove("test-line-count");
-    const overflow = lineCount > config.lineCount || (config.charLimit && charCount > config.charLimit);
+    const overflow = lineCount > config.lineCount || (config.charLimit && charCount > config.charLimit) || (config.scrollWidth != null && content.scrollWidth > config.scrollWidth);
     bubbleRecord.bubble.classList.toggle("overflow", overflow);
   }
 

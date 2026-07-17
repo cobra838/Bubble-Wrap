@@ -549,7 +549,7 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 566px;
+  width: 574px;
   margin: 0 auto;
 }
 
@@ -631,7 +631,7 @@ textarea {
   flex-shrink: 0;
   background: rgba(0, 0, 0, 0.55);
   border-radius: 55px;
-  width: 566px;
+  width: 574px;
   height: 107px;
   cursor: text;
   transition:
@@ -656,12 +656,13 @@ textarea {
   box-sizing: border-box;
   position: relative;
   line-height: 1.25;
-  font-size: 20px;
+  font-size: 19.5px;
   font-family: "Calamity", serif;
   color: var(--bubble-text);
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
-  white-space: break-spaces;
-  overflow-wrap: anywhere;
+  white-space: pre;
+  overflow: visible;
+  overflow-wrap: normal;
   max-height: 100%;
   scrollbar-width: none;
 }
@@ -672,14 +673,14 @@ textarea {
 
 .bubble.dialogue,
 .bubble[data-type="dialogue"] {
-  width: 566px;
+  width: 574px;
   height: 107px;
   border-radius: calc(107px / 2);
 }
 
 .bubble.signboard,
 .bubble[data-type="signboard"] {
-  width: 566px;
+  width: 574px;
   height: 107px;
   border-radius: 6px;
 }
@@ -739,6 +740,21 @@ textarea {
   min-width: 0;
 }
 
+/* Dialogue and sign text grow out from the center instead of soft-wrapping. */
+.bubble.dialogue .bubble-content,
+.bubble.signboard .bubble-content,
+.bubble[data-type="dialogue"] .bubble-content,
+.bubble[data-type="signboard"] .bubble-content {
+  width: max-content;
+  min-width: max-content;
+  max-width: none;
+  padding-inline: 0;
+  flex: 0 0 auto;
+  white-space: pre;
+  overflow: visible;
+  overflow-wrap: normal;
+}
+
 .bubble.dialogue .bubble-content,
 .bubble.signboard .bubble-content,
 .bubble[data-type="dialogue"] .bubble-content,
@@ -751,7 +767,7 @@ textarea {
 }
 
 .bubble.overflow .bubble-content {
-  overflow: scroll;
+  overflow: visible;
 }
 
 .bubble-content:not(:focus) > div:only-child:empty::before {
