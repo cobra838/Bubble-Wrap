@@ -13,6 +13,7 @@ import {
 } from "./RawContent.js";
 import { buildMsytBcmlJson, buildMsytYaml, isTagMappedToMsyt, parseMsytBcmlJson, parseMsytYaml } from "./MSYTFormat.js";
 import { getColorChoices, getColorCss, getTags, setGcfText } from "./GcfRegistry.js";
+import { canAutoSplitDocument, separatorForBubbleBoundary, splitRawAtLineLimit } from "./SplitPolicy.js";
 
 const STORAGE_GAME_KEY = "bubble_wrap_game";
 const DOC_MODE_AEON = "aeon-yaml";
@@ -2320,9 +2321,8 @@ export default class DocumentApp {
 
   // Decide whether autosplit is allowed for this chain.
   canAutoSplitChain(chain) {
-    if (this.currentDocMode !== DOC_MODE_BCML) return true;
     const path = String(chain.msytPath || this.msytDocInfo.defaultPath || "");
-    return path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/");
+    return canAutoSplitDocument(this.currentDocMode, path);
   }
 
   // Return the line cap for the chain's current bubble type.
@@ -2331,29 +2331,14 @@ export default class DocumentApp {
     return BubbleType[type]?.lineCount ?? 3;
   }
 
-  // Decide whether an AEON soft split may stay as plain text.
-  canAeonSoftSplitStayText(chain, previousBubble) {
-    if (!previousBubble) return false;
-    const previousRaw = previousBubble.content.dataset.raw ?? serializeContent(previousBubble.content);
-    return previousRaw.split("\n").length === this.getBubbleLineLimit(chain);
-  }
-
-  // Decide whether an MSYT split may stay as a newline.
-  canMsytSoftSplitStayText(chain, mergedPageRaw) {
-    const path = String(chain.msytPath || this.msytDocInfo.defaultPath || "");
-    if (!(path.startsWith("EventFlowMsg/") || path.startsWith("DemoMsg/"))) return false;
-    return String(mergedPageRaw || "").split("\n").length > this.getBubbleLineLimit(chain);
-  }
-
   // Split oversized bubble text into following bubbles.
   autoSplitBubble(bubbleRecord) {
     if (!this.autoSplit || !this.canAutoSplitChain(bubbleRecord.chain)) return;
     const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
-    const lines = raw.split("\n");
     const limit = this.getBubbleLineLimit(bubbleRecord.chain);
-    if (lines.length <= limit) return;
-    const keepRaw = lines.slice(0, limit).join("\n");
-    const overflowRaw = lines.slice(limit).join("\n");
+    const split = splitRawAtLineLimit(raw, limit);
+    if (!split) return;
+    const { keepRaw, overflowRaw } = split;
     renderRawToContent(bubbleRecord.content, keepRaw);
     bubbleRecord.content.dataset.raw = keepRaw;
     this.syncMetaBar(bubbleRecord);
@@ -2644,60 +2629,32 @@ export default class DocumentApp {
     return null;
   }
 
-  // Walk one entry's bubbles and let the caller decide each boundary separator.
-  serializeBubbleChain(chain, pickBoundary) {
+  // Serialize one entry with the shared automatic-split boundary policy.
+  serializeBubbleChain(chain) {
     let raw = "";
-    let pageRaw = "";
     let previousBubble = null;
     chain.bubbles.forEach((bubble, index) => {
       const bubbleRaw = bubble.content.dataset.raw ?? serializeContent(bubble.content);
       if (index === 0) {
         raw += bubbleRaw;
-        pageRaw = bubbleRaw;
         previousBubble = bubble;
         return;
       }
-
-      const boundary = pickBoundary(chain, previousBubble, bubble, pageRaw, bubbleRaw);
-      raw += boundary.separator;
+      const previousRaw = previousBubble.content.dataset.raw ?? serializeContent(previousBubble.content);
+      raw += separatorForBubbleBoundary(bubble.joinKind, previousRaw, this.getBubbleLineLimit(chain));
       raw += bubbleRaw;
-      pageRaw = boundary.nextPageRaw;
       previousBubble = bubble;
     });
     return raw;
   }
 
-  // Decide how AEON should join the next bubble into the current raw text.
-  pickAeonBoundary(chain, previousBubble, bubble, pageRaw, bubbleRaw) {
-    const mergedPageRaw = `${pageRaw}\n${bubbleRaw}`;
-    if (bubble.joinKind === "pageBreak") return { separator: "{{pageBreak}}", nextPageRaw: bubbleRaw };
-    if (bubble.joinKind === "softBreak") {
-      if (this.canAeonSoftSplitStayText(chain, previousBubble)) {
-        return { separator: "\n", nextPageRaw: mergedPageRaw };
-      }
-      return { separator: "{{pageBreak}}", nextPageRaw: bubbleRaw };
-    }
-    return { separator: "\n", nextPageRaw: mergedPageRaw };
-  }
-
-  // Decide how MSYT should join the next bubble into the current raw text.
-  pickMsytBoundary(chain, _previousBubble, bubble, pageRaw, bubbleRaw) {
-    const mergedPageRaw = `${pageRaw}\n${bubbleRaw}`;
-    if (bubble.joinKind === "pageBreak") return { separator: "{{pageBreak}}", nextPageRaw: bubbleRaw };
-    if (this.canMsytSoftSplitStayText(chain, mergedPageRaw)) {
-      return { separator: "\n", nextPageRaw: mergedPageRaw };
-    }
-    return { separator: "{{pageBreak}}", nextPageRaw: bubbleRaw };
-  }
-
-  // Serialize one AEON chain using newline/pageBreak semantics.
+  // AEON, MSYT and BCML now share the same soft-split semantics.
   serializeChainRaw(chain) {
-    return this.serializeBubbleChain(chain, this.pickAeonBoundary.bind(this));
+    return this.serializeBubbleChain(chain);
   }
 
-  // Serialize one MSYT chain using soft-split/pageBreak semantics.
   serializeMsytChain(chain) {
-    return this.serializeBubbleChain(chain, this.pickMsytBoundary.bind(this));
+    return this.serializeBubbleChain(chain);
   }
 
   // Apply one bubble type to all chains.
