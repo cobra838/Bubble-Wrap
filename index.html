@@ -24,12 +24,12 @@
       <button class="tbtn game-btn" id="btn-totk" onclick="selectGame('TotK')">TotK</button>
       <div class="sep"></div>
       <div id="file-drop" onclick="document.getElementById('file-input').click()">📂 Open YAML / .msyt / texts.json</div>
-      <input type="file" id="file-input" accept=".yaml,.yml,.json,.msyt" />
+      <input type="file" id="file-input" accept=".yaml,.yml,.txt,.json,.msyt" />
       <div class="sep"></div>
       <button class="tbtn" id="btn-meta" onclick="toggleMeta()">⚙ Meta</button>
       <button class="tbtn" id="btn-export" onclick="exportYaml()">📋 Export</button>
       <button class="tbtn" id="btn-compare" onclick="startCompare()" oncontextmenu="openCompareMenu(event)">Compare</button>
-      <input type="file" id="compare-file-input" accept=".yaml,.yml,.json,.msyt" />
+      <input type="file" id="compare-file-input" accept=".yaml,.yml,.txt,.json,.msyt" />
       <div id="compare-menu">
         <label>Files per comparison <input id="compare-files-per-group" type="number" min="1" value="2" /></label>
         <label>Comparisons <input id="compare-group-count" type="number" min="1" value="1" /></label>

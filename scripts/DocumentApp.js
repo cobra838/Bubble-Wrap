@@ -900,7 +900,6 @@ export default class DocumentApp {
     this.btnExpBcml.classList.toggle("active", this.exportMode === DOC_MODE_BCML);
     this.btnTag.disabled = !tagEnabled;
     this.btnTag.classList.toggle("disabled", !tagEnabled);
-    this.fileDrop.textContent = "📂 Open YAML / .msyt / texts.json";
     this.refreshChainModeUi();
   }
 
