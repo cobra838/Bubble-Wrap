@@ -678,6 +678,7 @@ export default class DocumentApp {
     this.tagPickerOpenId = 0;
     this.surfaceDragSelection = null;
     this.activeContent = null;
+    this.documentRenderId = 0;
     this.autoSplit = localStorage.getItem("msbt_autosplit") !== "0";
 
     this.sidebar = document.getElementById("sidebar");
@@ -815,7 +816,7 @@ export default class DocumentApp {
     window.toggleAutoSplit = () => this.toggleAutoSplit();
     window.applyGlobalType = (type) => this.applyGlobalType(type);
     window.doSearch = (query) => this.doSearch(query);
-    window.openNC = () => this.createChain(this.makeNewEntry());
+    window.openNC = () => this.createNewChain();
     window.closeRaw = () => this.closeRaw();
     window.applyRaw = () => this.applyRaw();
     window.closeTE = () => this.closeTE();
@@ -857,7 +858,7 @@ export default class DocumentApp {
     this.btnTag.disabled = !tagEnabled;
     this.btnTag.classList.toggle("disabled", !tagEnabled);
     this.fileDrop.textContent = "📂 Open YAML / .msyt / texts.json";
-    this.chains.forEach((chain) => this.updateChainModeUi(chain));
+    this.refreshChainModeUi();
   }
 
   // Refresh the meta panel contents for the current mode.
@@ -1268,8 +1269,24 @@ export default class DocumentApp {
     this.setStatus(`Loaded ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
   }
 
+  // Dispose state owned by the previous document and start a new render.
+  beginDocumentRender() {
+    this.documentRenderId += 1;
+    this.tagPickerOpenId += 1;
+    this.closeRaw();
+    this.closeTE();
+    this.closeCtx();
+    this.closeTP();
+    this.activeContent = null;
+    this.tagSelection = null;
+    this.surfaceDragSelection = null;
+    getSelection()?.removeAllRanges();
+    return this.documentRenderId;
+  }
+
   // Rebuild the whole document from entry data.
   renderDoc(entries) {
+    const renderId = this.beginDocumentRender();
     this.chains = [];
     this.chainList.innerHTML = "";
     this.sidebar.innerHTML = "";
@@ -1279,17 +1296,29 @@ export default class DocumentApp {
       this.syncEntryUi();
       return;
     }
-    entries.forEach((entry) => this.createChain(entry));
-    this.syncEntryUi();
-    this.refreshBubbleOverflowsAfterFonts();
+    this.isImportingDocument = true;
+    try {
+      entries.forEach((entry) => this.createChain(entry));
+    } finally {
+      this.isImportingDocument = false;
+    }
+    this.refreshDocumentUi();
+    this.refreshBubbleOverflows();
+    this.refreshBubbleOverflowsAfterFonts(renderId);
+  }
+
+  // Refresh all overflow warnings after the document has been mounted.
+  refreshBubbleOverflows() {
+    this.chains.forEach((chain) => {
+      chain.bubbles.forEach((bubble) => this.updateBubbleOverflow(bubble, chain.typeSelect.value));
+    });
   }
 
   // Refresh rendered widths after import once the dialogue font is ready for scrollWidth.
-  refreshBubbleOverflowsAfterFonts() {
+  refreshBubbleOverflowsAfterFonts(renderId) {
     document.fonts?.ready?.then(() => {
-      this.chains.forEach((chain) => {
-        chain.bubbles.forEach((bubble) => this.updateBubbleOverflow(bubble, chain.typeSelect.value));
-      });
+      if (renderId !== this.documentRenderId) return;
+      this.refreshBubbleOverflows();
     });
   }
 
@@ -1299,7 +1328,7 @@ export default class DocumentApp {
     const btn = document.createElement("div");
     btn.id = "add-chain-btn";
     btn.innerHTML = '<span style="font-size:18px">＋</span> Create Entry';
-    btn.addEventListener("click", () => this.createChain(this.makeNewEntry()));
+    btn.addEventListener("click", () => this.createNewChain());
     this.chainList.appendChild(btn);
   }
 
@@ -1338,6 +1367,32 @@ export default class DocumentApp {
         ? getAeonAttributeKey(this.chains, this.currentDocMode)
         : chain.attrKey || "attributes";
     this.updateSidebarItem(chain);
+  }
+
+  // Refresh mode-dependent UI for all chains in one pass.
+  refreshChainModeUi() {
+    const aeonAttributeKey = this.exportMode === DOC_MODE_AEON ? getAeonAttributeKey(this.chains, this.currentDocMode) : null;
+    const showAttribute = hasATR1(this.currentGame, this.yamlMeta);
+    this.chains.forEach((chain) => {
+      chain.attrInput.placeholder = this.exportMode === DOC_MODE_AEON ? aeonAttributeKey : chain.attrKey || "attributes";
+      chain.attrInput.style.display = showAttribute ? "" : "none";
+      this.updateSidebarItem(chain);
+    });
+  }
+
+  // Refresh all UI that depends on the complete chain list.
+  refreshDocumentUi() {
+    this.refreshChainModeUi();
+    this.refreshChoicePills();
+    this.doSearch(this.searchInput.value);
+    this.syncEntryUi();
+  }
+
+  // Create a user-requested empty chain, then refresh document-wide UI once.
+  createNewChain() {
+    const chain = this.createChain(this.makeNewEntry());
+    this.refreshDocumentUi();
+    return chain;
   }
 
   // Ensure BCML locale/path containers exist before inserting entries.
@@ -1585,15 +1640,13 @@ export default class DocumentApp {
     const pages = splitPages(entry.content);
     pages.forEach((page, index) => this.addBubble(chain, page, null, index === 0 ? null : "pageBreak"));
     this.applyChainType(chain, bubbleType, true);
-    const snapshot = [...chain.bubbles];
-    snapshot.forEach((bubble) => {
-      const raw = bubble.content.dataset.raw ?? serializeContent(bubble.content);
-      if (raw.split("\n").length > 3) this.autoSplitBubble(bubble);
-    });
-    this.updateChainModeUi(chain);
-    this.refreshChoicePills();
-    this.doSearch(this.searchInput.value);
-    this.syncEntryUi();
+    if (this.autoSplit && this.canAutoSplitChain(chain)) {
+      const snapshot = [...chain.bubbles];
+      snapshot.forEach((bubble) => {
+        const raw = bubble.content.dataset.raw ?? serializeContent(bubble.content);
+        if (raw.split("\n").length > 3) this.autoSplitBubble(bubble);
+      });
+    }
     return chain;
   }
 
@@ -2385,6 +2438,7 @@ export default class DocumentApp {
 
   // Mark a bubble as overflowed when it exceeds type limits.
   updateBubbleOverflow(bubbleRecord, type) {
+    if (this.isImportingDocument) return;
     const config = BubbleType[type];
     const content = bubbleRecord.content;
     let charCount = 0;
