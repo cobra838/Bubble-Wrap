@@ -1,6 +1,7 @@
 import { getColorNameById } from "./GcfRegistry.js";
 
 const BOTW_MSYT_GCF_TAG_NAMES = new Set([
+  "ruby",
   "color",
   "pageBreak",
   "choice2",
@@ -42,12 +43,12 @@ const BOTW_MSYT_GCF_TAG_NAMES = new Set([
   "setVoice",
   "wordInfo",
   "pluralCase",
+  "gender",
   "uppercaseNextWord",
   "lowercaseNextWord"
 ]);
 
-// TODO: "ruby"
-// Also: "batchimObject", "batchimDirection"
+// TODO Korean: "batchimObject", "batchimDirection"
 
 
 const MSYT_VARIABLE_KIND_TO_TAG = {
@@ -376,6 +377,17 @@ function msytWordInfoArgs(control) {
   };
 }
 
+function msytRubyInfo(control) {
+  const zero = control?.zero?.zero;
+  if (!control || control.kind !== "raw" || !zero) return null;
+  const valueBytes = Number(zero.field_3);
+  const byteSpan = Number(zero.field_2);
+  if (!Number.isInteger(valueBytes) || valueBytes < 0 || valueBytes % 2 !== 0) return null;
+  if (!Number.isInteger(byteSpan) || byteSpan < 0 || byteSpan > 0xffff) return null;
+  if (Number(zero.field_1) !== valueBytes + 4) return null;
+  return { byteSpan, valueLength: valueBytes / 2 };
+}
+
 // Helper func for "choiceByFlags" and "fiveFlags"
 function readMsytWordString(words, cursor) {
   const len = Math.floor(Number(words[cursor.index++] || 0) / 2);
@@ -614,6 +626,17 @@ function msytControlToRaw(control) {
       ["arg1", "arg2", "arg3"]
     );
   }
+  if (kind === "localisation" && control.localisation_kind === "gender" && Array.isArray(control.options) && control.options.length >= 3) {
+    return buildTagStr(
+      "gender",
+      {
+        m: String(control.options[0] ?? ""),
+        f: String(control.options[1] ?? ""),
+        n: String(control.options[2] ?? "")
+      },
+      ["m", "f", "n"]
+    );
+  }
   if (kind === "icon" && control.icon != null) {
     const mapped = msytIconToEditorValue(control.icon);
     if (mapped) return buildTagStr("icon", { type: String(mapped) });
@@ -660,9 +683,23 @@ function msytControlToRaw(control) {
 
 function msytContentsToRaw(contents) {
   let out = "";
-  for (const item of contents || []) {
+  for (let index = 0; index < (contents || []).length; index++) {
+    const item = contents[index];
     if (item && typeof item.text === "string") out += item.text;
-    else if (item && item.control) out += msytControlToRaw(item.control);
+    else if (item && item.control) {
+      const ruby = msytRubyInfo(item.control);
+      const next = contents[index + 1];
+      if (ruby && typeof next?.text === "string" && next.text.length >= ruby.valueLength) {
+        out += buildTagStr("ruby", {
+          byteSpan: String(ruby.byteSpan),
+          value: next.text.slice(0, ruby.valueLength)
+        }, ["byteSpan", "value"]);
+        out += next.text.slice(ruby.valueLength);
+        index += 1;
+      } else {
+        out += msytControlToRaw(item.control);
+      }
+    }
   }
   return out;
 }
@@ -1100,6 +1137,22 @@ function tryParseMsytControlFromRaw(rawTag) {
   const { name, args } = parseTI(rawTag.slice(2, -2));
   if (name === "pageBreak") return { kind: "raw", zero: { four: { field_1: 0 } } };
   if (name === "msyt" && args.json) return JSON.parse(base64ToUtf8(args.json));
+  if (name === "ruby") {
+    const byteSpan = Number(args.byteSpan);
+    const value = String(args.value ?? "");
+    const valueBytes = value.length * 2;
+    if (!Number.isInteger(byteSpan) || byteSpan < 0 || byteSpan > 0xffff || valueBytes > 0xffff - 4) return null;
+    return {
+      kind: "raw",
+      zero: {
+        zero: {
+          field_1: valueBytes + 4,
+          field_2: byteSpan,
+          field_3: valueBytes
+        }
+      }
+    };
+  }
   if (MSYT_TAG_TO_RAW_ONE_FIELD[name] != null) {
     return {
       kind: "raw",
@@ -1176,6 +1229,13 @@ function tryParseMsytControlFromRaw(rawTag) {
       kind: "localisation",
       localisation_kind: "plural",
       options: [String(args.arg1), String(args.arg2), String(args.arg3)]
+    };
+  }
+  if (name === "gender") {
+    return {
+      kind: "localisation",
+      localisation_kind: "gender",
+      options: [String(args.m), String(args.f), String(args.n)]
     };
   }
   if (name === "wordInfo") {
@@ -1269,17 +1329,25 @@ function tryParseMsytControlFromRaw(rawTag) {
 
 export function rawToMsytContents(raw) {
   const contents = [];
+  const pushText = (text) => {
+    if (!text) return;
+    const previous = contents[contents.length - 1];
+    if (previous && typeof previous.text === "string") previous.text += text;
+    else contents.push({ text });
+  };
   let last = 0;
   for (const match of String(raw || "").matchAll(/\{\{([^}]*)\}\}/g)) {
     const text = raw.slice(last, match.index);
-    if (text) contents.push({ text });
+    pushText(text);
     last = match.index + match[0].length;
+    const { name, args } = parseTI(match[1]);
     const control = tryParseMsytControlFromRaw(match[0]);
     if (!control) throw new Error(`Unsupported msyt control tag: ${match[0]}`);
     contents.push({ control });
+    if (name === "ruby") pushText(String(args.value ?? ""));
   }
   const tail = raw.slice(last);
-  if (tail) contents.push({ text: tail });
+  pushText(tail);
   return contents;
 }
 
