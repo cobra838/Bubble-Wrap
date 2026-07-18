@@ -87,8 +87,8 @@ function tagColor(name) {
   return `hsl(${hash % 360},70%,58%)`;
 }
 
-// Guess the default bubble type from an MSYT path.
-function inferMsytBubbleTypeFromPath(path) {
+// Guess the default bubble type from a BCML file path.
+function inferBcmlBubbleTypeFromPath(path) {
   const value = String(path || "").replaceAll("\\", "/");
   if (/(^|\/)ActorType\//.test(value)) return "item";
   if (/(^|\/)QuestMsg\//.test(value)) return "questBOTW";
@@ -104,15 +104,15 @@ function isChoiceLabel(label) {
 // Create a new empty entry for the current mode.
 function defaultEntry(mode = DOC_MODE_AEON, msytDocInfo = {}) {
   const isMsyt = mode === DOC_MODE_BCML || mode === DOC_MODE_MSYT;
-  const defaultPath = msytDocInfo.defaultPath || "NewFile.msyt";
+  const isBcml = mode === DOC_MODE_BCML;
+  const bcmlPath = msytDocInfo.bcmlDefaultPath;
   return {
     label: "",
     attrKey: isMsyt ? "attributes" : "attribute",
     attrVal: "",
     content: "",
-    bubbleType: isMsyt ? inferMsytBubbleTypeFromPath(defaultPath) : "dialogue",
-    msytLocale: msytDocInfo.defaultLocale || "EUen",
-    msytPath: defaultPath,
+    bubbleType: isBcml ? inferBcmlBubbleTypeFromPath(bcmlPath) : "dialogue",
+    ...(isBcml ? { bcmlLocale: msytDocInfo.bcmlDefaultLocale, bcmlPath } : {}),
     msytHasAttributes: isMsyt
   };
 }
@@ -665,8 +665,6 @@ export default class DocumentApp {
     this.exportMode = DOC_MODE_AEON;
     this.yamlMeta = "";
     this.msytDocInfo = {
-      defaultLocale: "EUen",
-      defaultPath: "NewFile.msyt",
       msytMeta: null
     };
     this.chains = [];
@@ -876,8 +874,8 @@ export default class DocumentApp {
       return;
     }
     this.metaTextarea.placeholder = "MSYT mode does not use a YAML meta block";
-    this.metaTextarea.value = `defaultLocale: ${this.msytDocInfo.defaultLocale || "EUen"}\ndefaultPath: ${
-      this.msytDocInfo.defaultPath || "NewFile.msyt"
+    this.metaTextarea.value = `defaultLocale: ${this.msytDocInfo.bcmlDefaultLocale}\ndefaultPath: ${
+      this.msytDocInfo.bcmlDefaultPath
     }\n`;
   }
 
@@ -1190,13 +1188,13 @@ export default class DocumentApp {
   loadText(text) {
     const normalized = normalizeNewlines(text);
     const trimmed = normalized.trimStart();
+
+    // Aeon
     if (!trimmed) {
       this.currentDocMode = DOC_MODE_AEON;
       this.exportMode = DOC_MODE_AEON;
       this.yamlMeta = "";
       this.msytDocInfo = {
-        defaultLocale: "EUen",
-        defaultPath: "NewFile.msyt",
         msytMeta: null
       };
       this.renderDoc([]);
@@ -1206,6 +1204,7 @@ export default class DocumentApp {
       return;
     }
 
+    // BCML
     if (trimmed.startsWith("{")) {
       try {
         const doc = parseMsytBcmlJson(normalized);
@@ -1213,8 +1212,8 @@ export default class DocumentApp {
         this.exportMode = DOC_MODE_BCML;
         this.yamlMeta = "";
         this.msytDocInfo = {
-          defaultLocale: doc.defaultLocale || "EUen",
-          defaultPath: doc.defaultPath || "NewFile.msyt",
+          bcmlDefaultLocale: doc.bcmlDefaultLocale,
+          bcmlDefaultPath: doc.bcmlDefaultPath,
           msytMeta: null
         };
         this.selectGame("BotW");
@@ -1229,6 +1228,7 @@ export default class DocumentApp {
       }
     }
 
+    // MSYT
     if (/^(?:---\n)?(?:\s*group_count:|\s*entries:)/m.test(trimmed)) {
       try {
         const doc = parseMsytYaml(normalized);
@@ -1236,8 +1236,6 @@ export default class DocumentApp {
         this.exportMode = DOC_MODE_MSYT;
         this.yamlMeta = "";
         this.msytDocInfo = {
-          defaultLocale: "EUen",
-          defaultPath: "NewFile.msyt",
           msytMeta: doc.meta
         };
         this.selectGame("BotW");
@@ -1257,8 +1255,6 @@ export default class DocumentApp {
     this.exportMode = DOC_MODE_AEON;
     this.yamlMeta = doc.yamlMeta;
     this.msytDocInfo = {
-      defaultLocale: "EUen",
-      defaultPath: "NewFile.msyt",
       msytMeta: { group_count: getAeonLabelGroups(doc.yamlMeta) }
     };
     if (this.yamlMeta.includes("hasATR1: true")) this.selectGame("BotW");
@@ -1305,6 +1301,13 @@ export default class DocumentApp {
     this.refreshDocumentUi();
     this.refreshBubbleOverflows();
     this.refreshBubbleOverflowsAfterFonts(renderId);
+  }
+
+  // Refresh all overflow warnings after the document has been mounted.
+  refreshBubbleOverflows() {
+    this.chains.forEach((chain) => {
+      chain.bubbles.forEach((bubble) => this.updateBubbleOverflow(bubble, chain.typeSelect.value));
+    });
   }
 
   // Refresh all overflow warnings after the document has been mounted.
@@ -1396,21 +1399,22 @@ export default class DocumentApp {
   }
 
   // Ensure BCML locale/path containers exist before inserting entries.
-  ensureBcmlContainers(locale, path) {
-    const localeValue = locale || this.msytDocInfo.defaultLocale || "EUen";
-    const pathValue = path || this.msytDocInfo.defaultPath || "NewFile.msyt";
+  ensureBcmlContainers(locale, path, localeGroupId = null, pathGroupId = null) {
+    const localeValue = locale;
+    const pathValue = path;
 
     let localeSection = [...this.chainList.children].find(
-      (element) => element.classList?.contains("msyt-locale-group") && element.dataset.locale === localeValue
+      (element) => element.classList?.contains("msyt-locale-group") && element.dataset.locale === localeValue && (!localeGroupId || element.dataset.groupId === localeGroupId)
     );
     let sidebarLocaleSection = [...this.sidebar.children].find(
-      (element) => element.classList?.contains("sb-tree-locale") && element.dataset.locale === localeValue
+      (element) => element.classList?.contains("sb-tree-locale") && element.dataset.locale === localeValue && (!localeGroupId || element.dataset.groupId === localeGroupId)
     );
 
     if (!localeSection) {
       localeSection = document.createElement("section");
       localeSection.className = "msyt-locale-group";
       localeSection.dataset.locale = localeValue;
+      localeSection.dataset.groupId = localeGroupId || localeValue;
 
       const localeHeader = document.createElement("div");
       localeHeader.className = "msyt-locale-hdr";
@@ -1433,6 +1437,7 @@ export default class DocumentApp {
       sidebarLocaleSection = document.createElement("section");
       sidebarLocaleSection.className = "sb-tree-locale";
       sidebarLocaleSection.dataset.locale = localeValue;
+      sidebarLocaleSection.dataset.groupId = localeGroupId || localeValue;
 
       const sidebarLocaleTitle = document.createElement("div");
       sidebarLocaleTitle.className = "sb-tree-locale-title";
@@ -1444,10 +1449,10 @@ export default class DocumentApp {
     }
 
     let pathSection = [...localeSection.children].find(
-      (element) => element.classList?.contains("msyt-path-group") && element.dataset.path === pathValue
+      (element) => element.classList?.contains("msyt-path-group") && element.dataset.path === pathValue && (!pathGroupId || element.dataset.groupId === pathGroupId)
     );
     let sidebarPathSection = [...sidebarLocaleSection.children].find(
-      (element) => element.classList?.contains("sb-tree-path") && element.dataset.path === pathValue
+      (element) => element.classList?.contains("sb-tree-path") && element.dataset.path === pathValue && (!pathGroupId || element.dataset.groupId === pathGroupId)
     );
 
     if (!pathSection) {
@@ -1455,6 +1460,7 @@ export default class DocumentApp {
       pathSection.className = "msyt-path-group";
       pathSection.dataset.locale = localeValue;
       pathSection.dataset.path = pathValue;
+      pathSection.dataset.groupId = pathGroupId || pathValue;
 
       const pathHeader = document.createElement("div");
       pathHeader.className = "msyt-path-hdr";
@@ -1478,6 +1484,7 @@ export default class DocumentApp {
       sidebarPathSection.className = "sb-tree-path";
       sidebarPathSection.dataset.locale = localeValue;
       sidebarPathSection.dataset.path = pathValue;
+      sidebarPathSection.dataset.groupId = pathGroupId || pathValue;
 
       const sidebarPathTitle = document.createElement("div");
       sidebarPathTitle.className = "sb-tree-path-title";
@@ -1501,7 +1508,9 @@ export default class DocumentApp {
       localeSection,
       pathSection,
       sidebarLocaleSection,
-      sidebarPathSection
+      sidebarPathSection,
+      localeGroupId: localeSection.dataset.groupId,
+      pathGroupId: pathSection.dataset.groupId
     };
   }
 
@@ -1553,12 +1562,11 @@ export default class DocumentApp {
   // Create one entry section and all of its bubbles.
   createChain(entry = this.makeNewEntry(), containers = null) {
     const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
-    const msytLocale = entry.msytLocale || this.msytDocInfo.defaultLocale || "EUen";
-    const msytPath = entry.msytPath || this.msytDocInfo.defaultPath || "NewFile.msyt";
+    const isBcml = this.currentDocMode === DOC_MODE_BCML;
     const isChoice = isChoiceLabel(entry.label);
-    const bubbleType = isChoice ? "choice" : entry.bubbleType || (isMsyt ? inferMsytBubbleTypeFromPath(msytPath) : "dialogue");
+    const bubbleType = isChoice ? "choice" : entry.bubbleType || (isBcml ? inferBcmlBubbleTypeFromPath(entry.bcmlPath) : "dialogue");
     const bcmlContainers =
-      containers || (this.currentDocMode === DOC_MODE_BCML ? this.ensureBcmlContainers(msytLocale, msytPath) : null);
+      containers || (isBcml ? this.ensureBcmlContainers(entry.bcmlLocale, entry.bcmlPath, entry.bcmlLocaleGroupId, entry.bcmlPathGroupId) : null);
     const chainId = `chain-${crypto.randomUUID()}`;
     const section = document.createElement("section");
     section.className = "chain";
@@ -1614,8 +1622,14 @@ export default class DocumentApp {
       bubbles: [],
       attrKey: entry.attrKey || (this.currentDocMode === DOC_MODE_AEON ? "attributeText" : "attributes"),
       msytHasAttributes: !!entry.msytHasAttributes,
-      msytLocale,
-      msytPath,
+      ...(isBcml
+        ? {
+            bcmlLocale: entry.bcmlLocale,
+            bcmlPath: entry.bcmlPath,
+            bcmlLocaleGroupId: entry.bcmlLocaleGroupId || bcmlContainers?.localeGroupId || null,
+            bcmlPathGroupId: entry.bcmlPathGroupId || bcmlContainers?.pathGroupId || null
+          }
+        : {}),
       localeSection: bcmlContainers?.localeSection || null,
       pathSection: bcmlContainers?.pathSection || null,
       sidebarLocaleSection: bcmlContainers?.sidebarLocaleSection || null,
@@ -2350,8 +2364,8 @@ export default class DocumentApp {
         const sameFile = this.chains.find(
           (candidate) =>
             candidate !== chain &&
-            candidate.msytLocale === chain.msytLocale &&
-            candidate.msytPath === chain.msytPath &&
+            candidate.bcmlLocaleGroupId === chain.bcmlLocaleGroupId &&
+            candidate.bcmlPathGroupId === chain.bcmlPathGroupId &&
             (candidate.labelInput.value === ref || candidate.labelInput.value === ref.padStart(4, "0"))
         );
         const target =
@@ -2384,8 +2398,7 @@ export default class DocumentApp {
 
   // Decide whether autosplit is allowed for this chain.
   canAutoSplitChain(chain) {
-    const path = String(chain.msytPath || this.msytDocInfo.defaultPath || "");
-    return canAutoSplitDocument(this.currentDocMode, path);
+    return canAutoSplitDocument(this.currentDocMode, chain.bcmlPath);
   }
 
   // Return the line cap for the chain's current bubble type.
@@ -2740,8 +2753,14 @@ export default class DocumentApp {
       raw: this.serializeChainRaw(chain),
       msytRaw: this.serializeMsytChain(chain),
       bubbleType: chain.typeSelect.value,
-      msytLocale: chain.msytLocale || this.msytDocInfo.defaultLocale || "EUen",
-      msytPath: chain.msytPath || this.msytDocInfo.defaultPath || "NewFile.msyt",
+      ...(this.currentDocMode === DOC_MODE_BCML
+        ? {
+            bcmlLocale: chain.bcmlLocale,
+            bcmlPath: chain.bcmlPath,
+            bcmlLocaleGroupId: chain.bcmlLocaleGroupId,
+            bcmlPathGroupId: chain.bcmlPathGroupId
+          }
+        : {}),
       msytHasAttributes: chain.msytHasAttributes || chain.attrInput.value !== ""
     }));
   }
@@ -2754,7 +2773,7 @@ export default class DocumentApp {
         .map((bubble) => rawToPlainText(bubble.content.dataset.raw ?? serializeContent(bubble.content)))
         .join("\n")
         .toLowerCase();
-      const haystack = `${chain.labelInput.value}\n${chain.attrInput.value}\n${chain.msytLocale || ""}\n${chain.msytPath || ""}\n${contentText}`.toLowerCase();
+      const haystack = `${chain.labelInput.value}\n${chain.attrInput.value}\n${chain.bcmlLocale ?? ""}\n${chain.bcmlPath ?? ""}\n${contentText}`.toLowerCase();
       const visible = !q || haystack.includes(q);
       chain.section.hidden = !visible;
       chain.sidebarItem.hidden = !visible;

@@ -1057,8 +1057,9 @@ export function parseMsytBcmlJson(text) {
         items.push({ key, children });
         i = next;
       } else {
+        const valueStart = i;
         i = skipValue(i);
-        items.push({ key });
+        items.push({ key, value: JSON.parse(normalized.slice(valueStart, i)) });
       }
       i = skipWs(i);
       if (normalized[i] === "}") return [items, i + 1];
@@ -1069,34 +1070,30 @@ export function parseMsytBcmlJson(text) {
   };
   const [orderedLocales] = parseObjectOrder(0, 0);
   const entries = [];
-  const defaultLocale = orderedLocales[0]?.key || "EUen";
-  let defaultPath = "NewFile.msyt";
-  for (const localeNode of orderedLocales) {
+  const bcmlDefaultLocale = orderedLocales[0]?.key;
+  for (const [localeIndex, localeNode] of orderedLocales.entries()) {
     const locale = localeNode.key;
-    const files = root[locale];
-    if (!files || typeof files !== "object" || Array.isArray(files)) continue;
-    for (const pathNode of localeNode.children || []) {
+    for (const [pathIndex, pathNode] of (localeNode.children || []).entries()) {
       const path = pathNode.key;
-      if (defaultPath === "NewFile.msyt") defaultPath = path;
-      const labels = files[path];
-      if (!labels || typeof labels !== "object" || Array.isArray(labels)) continue;
       for (const labelNode of pathNode.children || []) {
         const label = labelNode.key;
-        const entry = labels[label] || {};
+        const entry = labelNode.value || {};
         entries.push({
           label: String(label),
           attrKey: "attributes",
           attrVal: entry.attributes != null ? String(entry.attributes) : "",
           msytHasAttributes: entry.attributes != null,
           content: msytContentsToRaw(entry.contents || []),
-          msytLocale: locale,
-          msytPath: path,
-          docKey: `${locale}::${path}::${label}`
+          bcmlLocale: locale,
+          bcmlPath: path,
+          bcmlLocaleGroupId: `locale-${localeIndex}`,
+          bcmlPathGroupId: `locale-${localeIndex}-path-${pathIndex}`,
+          docKey: `${localeIndex}::${pathIndex}::${label}`
         });
       }
     }
   }
-  return { entries, defaultLocale, defaultPath };
+  return { entries, bcmlDefaultLocale, bcmlDefaultPath: entries[0]?.bcmlPath };
 }
 
 function tryParseMsytControlFromRaw(rawTag) {
@@ -1296,18 +1293,20 @@ export function buildMsytBcmlJson(chains, msytDocInfo) {
     return null;
   };
   for (const chain of chains) {
-    const locale = chain.msytLocale || msytDocInfo.defaultLocale || "EUen";
-    const path = chain.msytPath || msytDocInfo.defaultPath || "NewFile.msyt";
+    const locale = chain.bcmlLocale;
+    const path = chain.bcmlPath;
     const label = chain.label || "";
     const raw = chain.msytRaw ?? chain.raw;
-    let localeNode = findBy(locales, "locale", locale);
+    const localeGroupId = chain.bcmlLocaleGroupId || `locale:${locale}`;
+    const pathGroupId = chain.bcmlPathGroupId || `path:${path}`;
+    let localeNode = findBy(locales, "groupId", localeGroupId);
     if (!localeNode) {
-      localeNode = { locale, paths: [] };
+      localeNode = { groupId: localeGroupId, locale, paths: [] };
       locales.push(localeNode);
     }
-    let pathNode = findBy(localeNode.paths, "path", path);
+    let pathNode = findBy(localeNode.paths, "groupId", pathGroupId);
     if (!pathNode) {
-      pathNode = { path, labels: [] };
+      pathNode = { groupId: pathGroupId, path, labels: [] };
       localeNode.paths.push(pathNode);
     }
     pathNode.labels.push({
