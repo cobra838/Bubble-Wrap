@@ -1807,13 +1807,22 @@ export default class DocumentApp {
         }
         return;
       }
+
       if (!bubble.pageSep) {
         const pageSep = document.createElement("div");
         pageSep.className = "page-sep";
         bubble.card.prepend(pageSep);
         bubble.pageSep = pageSep;
       }
-      bubble.pageSep.textContent = `↵ Page ${++pageNumber}`;
+
+      const previousBubble = chain.bubbles[index - 1];
+      const previousRaw = previousBubble.content.dataset.raw ?? serializeContent(previousBubble.content);
+      const separator = separatorForBubbleBoundary(bubble.joinKind, previousRaw, this.getBubbleLineLimit(chain));
+
+      // A soft split becomes a page break when the previous bubble is no longer full.
+      // Everything besides softBreak and pageBreak is a regular "Newline".
+      const boundaryName = bubble.joinKind === "softBreak" ? (separator === "\n" ? "Soft split" : "Page break") : bubble.joinKind === "pageBreak" ? "Page break" : "Newline";
+      bubble.pageSep.textContent = `↵ Page ${++pageNumber} · ${boundaryName}`;
     });
   }
 
@@ -2433,6 +2442,7 @@ export default class DocumentApp {
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(bubbleRecord.chain);
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+    this.updatePageSepLabels(bubbleRecord.chain);
   }
 
   // Apply one undo step to a bubble.
@@ -2701,6 +2711,7 @@ export default class DocumentApp {
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(chain);
     this.updateBubbleOverflow(bubbleRecord, chain.typeSelect.value);
+    this.updatePageSepLabels(chain);
     this.checkFmtSel(content, fmtPopup);
   }
 
@@ -2742,6 +2753,7 @@ export default class DocumentApp {
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(bubbleRecord.chain);
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+    this.updatePageSepLabels(bubbleRecord.chain);
     bubbleRecord.fmtPopup?.classList.remove("show");
   }
 
@@ -2822,6 +2834,7 @@ export default class DocumentApp {
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(bubbleRecord.chain);
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
+    this.updatePageSepLabels(bubbleRecord.chain);
   }
 
   refreshChoicePills(targetChain = null) {
@@ -2964,6 +2977,7 @@ export default class DocumentApp {
     this.syncMetaBar(this.rawTarget);
     this.refreshChoicePills(this.rawTarget.chain);
     this.updateBubbleOverflow(this.rawTarget, this.rawTarget.chain.typeSelect.value);
+    this.updatePageSepLabels(this.rawTarget.chain);
     this.closeRaw();
     this.setStatus("Raw applied");
   }

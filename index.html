@@ -43,7 +43,11 @@
         <button class="tbtn export-mode-btn" id="btn-exp-bcml" onclick="setExportMode('msyt-bcml')" style="display: none;">texts.json</button>
       </div>
       <button class="tbtn" id="btn-tag" onclick="openTP()">＋ Tag</button>
-      <button class="tbtn" id="btn-autosplit" onclick="toggleAutoSplit()" title="Auto-wrap into a new bubble after 3 lines">✂ Auto-split: ON</button>
+      <button class="tbtn" id="btn-autosplit" onclick="toggleAutoSplit()" title="Splits the original text in an imported file with 4 or more consecutive \n-separated lines into separate 3-line bubbles, creating soft splits between them.
+Only applies when importing a file.
+The game has two ways to split text into bubbles: 1) with \n after three lines, when the fourth line begins; 2) with the GCF {{pageBreak}} tag (MSBT HEX 00 04) after any line.
+Bubble Wrap uses the term “soft split” for boundaries created by \n after the third line.
+On export, the original soft-split line breaks are preserved. If the previous bubble has other than 3 lines after editing, soft-split line breaks are automatically replaced with {{pageBreak}}.">✂ Auto-split: ON</button>
       <div class="sep"></div>
       <label style="font-size:12px;color:#666" for="global-type-select">All:</label>
       <select id="global-type-select" class="tbtn" style="padding:4px 6px;font-size:12px;cursor:pointer" onchange="applyGlobalType(this.value)">
