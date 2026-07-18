@@ -1274,7 +1274,6 @@ body[data-game="TotK"] .bubble-content [data-color="Purple"] { color: #ff00fe; }
   border-radius: 8px;
   padding: 18px;
   width: 560px;
-  max-height: 70vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
@@ -1679,4 +1678,15 @@ body[data-game="TotK"] .bubble-content [data-color="Purple"] { color: #ff00fe; }
 
 .compare-pane-lines {
   background: #faf8f5;
+}
+
+/* Hide BotW import formats for TotK. */
+.file-open-totk {
+  display: none;
+}
+body[data-game="TotK"] .file-open-botw {
+  display: none;
+}
+body[data-game="TotK"] .file-open-totk {
+  display: inline;
 }
