@@ -1,7 +1,12 @@
 {
   "scripts": {
     "start": "python -m http.server 3000 --bind 127.0.0.1",
-    "start:py": "py -3 -m http.server 3000 --bind 127.0.0.1"
+    "start:py": "py -3 -m http.server 3000 --bind 127.0.0.1",
+    "test:yaml": "node tests/test-yaml.cjs",
+    "test:msyt": "node tests/test-msyt.cjs",
+    "test:bcml": "node tests/test-bcml.cjs",
+    "test:msyt-to-yaml": "node tests/test-msyt-to-yaml.cjs",
+    "test:yaml-to-msyt": "node tests/test-yaml-to-msyt.cjs"
   },
   "devDependencies": {
     "eslint": "^8.23.1"
