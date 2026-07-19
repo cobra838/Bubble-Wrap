@@ -1735,3 +1735,52 @@ body[data-game="TotK"] .file-open-totk {
   line-height: 1.35;
   color: #667;
 }
+
+/* Bulk actions */
+#bulk-actions-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+
+#bulk-actions-modal.open {
+  display: flex;
+}
+
+#bulk-actions-box {
+  background: #fff;
+  border-radius: 8px;
+  padding: 18px;
+  min-width: 320px;
+  max-width: 420px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+#bulk-actions-box h3 {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 12px;
+  color: #224;
+}
+
+#bulk-actions-box .bulk-action {
+  margin: 9px 0;
+}
+
+#bulk-actions-box .bulk-action > button {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+#bulk-actions-box .bulk-action-description {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #667;
+}

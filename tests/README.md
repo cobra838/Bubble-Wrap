@@ -26,4 +26,6 @@ npm run test:yaml -- "C:\path\to\yaml" "C:\path\to\yaml-output" --game botw --au
 
 `--big-endian true|false` forces `bigEndian` in imported AEON YAML and changes the raw `delay` / `autoAdvance` frame order when needed. `--has-atr1 true|false` forces the import setting; `false` removes all imported attributes.
 
+Bulk actions run after each import: `--force-page-breaks`, `--collapse-soft-splits`, `--trim-empty`, `--swap-delay-frames`, and `--fix-delay-spacing`.
+
 The YAML, MSYT, and BCML tests compare the exported result to the imported file. The conversion tests only require a successful import and export, because their output format is intentionally different.

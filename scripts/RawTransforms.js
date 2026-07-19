@@ -8,3 +8,18 @@ export function swapRawFrameEndian(raw, parseInlineTag, buildInlineTag, tagNames
     return buildInlineTag(tag.name, args, tag.order);
   });
 }
+
+// Remove only blank lines at the start and end; preserve blank lines inside text.
+export function trimOuterBlankLines(raw) {
+  const lines = String(raw || "").split("\n");
+  while (lines.length && lines[0].trim() === "") lines.shift();
+  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+  return lines.join("\n");
+}
+
+// Move horizontal whitespace before a delay tag to after it when text follows.
+export function moveDelayTagSpaceAfter(raw) {
+  return String(raw || "").replace(/([ \t]+)(\{\{([^\s}]+)[^}]*\}\})(?=\S)/g, (match, space, tag, name) => {
+    return name.startsWith("delay") ? `${tag} ` : match;
+  });
+}

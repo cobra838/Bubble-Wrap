@@ -49,6 +49,7 @@ Only applies when importing a file.
 The game has two ways to split text into bubbles: 1) with \n after three lines, when the fourth line begins; 2) with the GCF {{pageBreak}} tag (MSBT HEX 00 04) after any line.
 Bubble Wrap uses the term “soft split” for boundaries created by \n after the third line.
 On export, the original soft-split line breaks are preserved. If the previous bubble has other than 3 lines after editing, soft-split line breaks are automatically replaced with {{pageBreak}}.">✂ Auto-split: ON</button>
+      <button class="tbtn" id="btn-bulk-actions" onclick="openBulkActions()" title="Bulk actions">⚒</button>
       <div class="sep"></div>
       <label style="font-size:12px;color:#666" for="global-type-select">All:</label>
       <select id="global-type-select" class="tbtn" style="padding:4px 6px;font-size:12px;cursor:pointer" onchange="applyGlobalType(this.value)">
@@ -166,6 +167,35 @@ On export, the original soft-split line breaks are preserved. If the previous bu
         </div>
         <div class="te-btns">
           <button onclick="closeSettings()">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="bulk-actions-modal" onclick="if(event.target===this)closeBulkActions()">
+      <div id="bulk-actions-box">
+        <h3>Bulk actions</h3>
+        <div class="bulk-action">
+          <button id="bulk-force-page-breaks">Convert all soft splits to {{pageBreak}}</button>
+          <div class="bulk-action-description">Soft split → {{pageBreak}}</div>
+        </div>
+        <div class="bulk-action">
+          <button id="bulk-collapse-soft-splits">Collapse soft-split bubbles</button>
+          <div class="bulk-action-description">Two bubbles joined by a soft split → one bubble with a regular \n between their text.</div>
+        </div>
+        <div class="bulk-action">
+          <button id="bulk-trim-empty">Trim outer blank lines and remove empty bubbles</button>
+          <div class="bulk-action-description">\n\nText\n\n → Text. Blank lines in the middle stay unchanged.</div>
+        </div>
+        <div class="bulk-action">
+          <button id="bulk-swap-delay-frames">Swap delay framesLo / framesHi</button>
+          <div class="bulk-action-description">{{delay framesLo="0" framesHi="255"}} → {{delay framesLo="255" framesHi="0"}}</div>
+        </div>
+        <div class="bulk-action">
+          <button id="bulk-fix-delay-spacing">Move spaces after delay tags</button>
+          <div class="bulk-action-description">"Text {{delayxx}}text" → "Text{{delayxx}} text"</div>
+        </div>
+        <div class="te-btns">
+          <button onclick="closeBulkActions()">Close</button>
         </div>
       </div>
     </div>

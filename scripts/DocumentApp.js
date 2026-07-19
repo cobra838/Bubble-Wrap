@@ -15,6 +15,7 @@ import { buildMsytBcmlJson, buildMsytYaml, isTagMappedToMsyt, parseMsytBcmlJson,
 import { getColorChoices, getColorCss, getTags, setGcfText } from "./GcfRegistry.js";
 import { canAutoSplitDocument, separatorForBubbleBoundary, splitRawAtLineLimit } from "./SplitPolicy.js";
 import ImportSettings from "./ImportSettings.js";
+import BulkActions from "./BulkActions.js";
 
 const STORAGE_GAME_KEY = "bubble_wrap_game";
 const DOC_MODE_AEON = "aeon-yaml";
@@ -802,6 +803,7 @@ export default class DocumentApp {
     this.globalTypeSelect = document.getElementById("global-type-select");
     this.emptyAddBtn = document.getElementById("empty-add-btn");
     this.importSettings = new ImportSettings();
+    this.bulkActions = new BulkActions(this, parseInlineTag, buildInlineTag);
 
     setRawContentGame(this.currentGame);
     this.bindEvents();
@@ -897,6 +899,7 @@ export default class DocumentApp {
       if (event.key === "Escape") {
         this.surfaceDragSelection = null;
         this.importSettings.close();
+        this.bulkActions.close();
         this.closeTP();
         this.closeCompare();
         this.closeRaw();
@@ -924,6 +927,9 @@ export default class DocumentApp {
     window.openSettings = () => this.importSettings.open();
     window.closeSettings = () => this.importSettings.close();
     window.setImportSettings = (settings) => this.importSettings.set(settings);
+    window.openBulkActions = () => this.bulkActions.open();
+    window.closeBulkActions = () => this.bulkActions.close();
+    window.applyBulkActions = (actions) => this.bulkActions.apply(actions);
     window.applyGlobalType = (type) => this.applyGlobalType(type);
     window.doSearch = (query) => this.doSearch(query);
     window.openNC = () => this.createNewChain();

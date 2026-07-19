@@ -339,6 +339,19 @@ async function configureImportSettings(cdp, options) {
     })})`
   );
 }
+async function configureBulkActions(cdp, options) {
+  if (!options.forcePageBreaks && !options.collapseSoftSplits && !options.trimEmpty && !options.swapDelayFrames && !options.fixDelaySpacing) return;
+  await cdp.evaluate(
+    `window.applyBulkActions(${JSON.stringify({
+      forcePageBreaks: options.forcePageBreaks,
+      collapseSoftSplits: options.collapseSoftSplits,
+      trimEmpty: options.trimEmpty,
+      swapDelayFrames: options.swapDelayFrames,
+      fixDelaySpacing: options.fixDelaySpacing
+    })})`
+  );
+}
+
 function parseArguments(testName, sourceDescription, allowedGames) {
   const positional = [];
   let game = "BotW";
@@ -346,6 +359,11 @@ function parseArguments(testName, sourceDescription, allowedGames) {
   let disableSoftSplit = false;
   let bigEndian = null;
   let hasATR1 = null;
+  let forcePageBreaks = false;
+  let collapseSoftSplits = false;
+  let trimEmpty = false;
+  let swapDelayFrames = false;
+  let fixDelaySpacing = false;
   for (let index = 2; index < process.argv.length; index++) {
     const argument = process.argv[index];
     if (argument === "--game") {
@@ -378,18 +396,38 @@ function parseArguments(testName, sourceDescription, allowedGames) {
       hasATR1 = value === "true";
       continue;
     }
+    if (argument === "--force-page-breaks") {
+      forcePageBreaks = true;
+      continue;
+    }
+    if (argument === "--collapse-soft-splits") {
+      collapseSoftSplits = true;
+      continue;
+    }
+    if (argument === "--trim-empty") {
+      trimEmpty = true;
+      continue;
+    }
+    if (argument === "--swap-delay-frames") {
+      swapDelayFrames = true;
+      continue;
+    }
+    if (argument === "--fix-delay-spacing") {
+      fixDelaySpacing = true;
+      continue;
+    }
     if (argument.startsWith("--")) throw new Error(`Unknown option: ${argument}`);
     positional.push(argument);
   }
   const sourceRootArg = positional[0];
   if (!sourceRootArg) {
-    console.error(`Usage: node tests/test-${testName}.cjs <${sourceDescription}-folder> [output-folder] [--game botw|totk] [--auto-split on|off] [--disable-soft-split on|off] [--big-endian true|false] [--has-atr1 true|false]`);
+    console.error(`Usage: node tests/test-${testName}.cjs <${sourceDescription}-folder> [output-folder] [--game botw|totk] [--auto-split on|off] [--disable-soft-split on|off] [--big-endian true|false] [--has-atr1 true|false] [--force-page-breaks] [--collapse-soft-splits] [--trim-empty] [--swap-delay-frames] [--fix-delay-spacing]`);
     process.exitCode = 1;
     return null;
   }
   if (positional.length > 2) throw new Error("Only an input folder and an optional output folder are allowed");
   if (!allowedGames.includes(game)) throw new Error(`${testName} supports only: ${allowedGames.join(", ")}`);
-  return { sourceRootArg, outputRootArg: positional[1], game, autoSplit, disableSoftSplit, bigEndian, hasATR1 };
+  return { sourceRootArg, outputRootArg: positional[1], game, autoSplit, disableSoftSplit, bigEndian, hasATR1, forcePageBreaks, collapseSoftSplits, trimEmpty, swapDelayFrames, fixDelaySpacing };
 }
 
 
@@ -412,6 +450,11 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
     disableSoftSplit: options.disableSoftSplit,
     bigEndian: options.bigEndian,
     hasATR1: options.hasATR1,
+    forcePageBreaks: options.forcePageBreaks,
+    collapseSoftSplits: options.collapseSoftSplits,
+    trimEmpty: options.trimEmpty,
+    swapDelayFrames: options.swapDelayFrames,
+    fixDelaySpacing: options.fixDelaySpacing,
     processed: [],
     differences: [],
     failures: []
@@ -426,6 +469,7 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
   console.log(`Disable soft split: ${options.disableSoftSplit ? "on" : "off"}`);
   console.log(`Force bigEndian: ${options.bigEndian == null ? "off" : options.bigEndian}`);
   console.log(`Force hasATR1: ${options.hasATR1 == null ? "off" : options.hasATR1}`);
+  console.log(`Bulk actions: page breaks ${options.forcePageBreaks ? "on" : "off"}; collapse ${options.collapseSoftSplits ? "on" : "off"}; trim ${options.trimEmpty ? "on" : "off"}; swap delay ${options.swapDelayFrames ? "on" : "off"}; delay spacing ${options.fixDelaySpacing ? "on" : "off"}`);
   const progressLine = createProgressLine(sourceFiles.length);
   let session = null;
   try {
@@ -447,6 +491,7 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
         const sourceText = fs.readFileSync(sourcePath, "utf8");
         const imported = await importText(session.cdp, fileName, sourceText);
         if (imported.alertText) throw new Error(`Import: ${imported.alertText}`);
+        await configureBulkActions(session.cdp, options);
         await configureGame(session.cdp, options.game);
         const exported = await exportText(session.cdp, targetMode);
         if (exported.alertText) throw new Error(`Export: ${exported.alertText}`);
