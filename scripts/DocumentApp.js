@@ -16,6 +16,7 @@ import { getColorChoices, getColorCss, getTags, setGcfText } from "./GcfRegistry
 import { canAutoSplitDocument, separatorForBubbleBoundary, splitRawAtLineLimit } from "./SplitPolicy.js";
 import ImportSettings from "./ImportSettings.js";
 import BulkActions from "./BulkActions.js";
+import DocumentSearch from "./DocumentSearch.js";
 
 const STORAGE_GAME_KEY = "bubble_wrap_game";
 const DOC_MODE_AEON = "aeon-yaml";
@@ -804,6 +805,7 @@ export default class DocumentApp {
     this.emptyAddBtn = document.getElementById("empty-add-btn");
     this.importSettings = new ImportSettings();
     this.bulkActions = new BulkActions(this, parseInlineTag, buildInlineTag);
+    this.documentSearch = new DocumentSearch(this);
 
     setRawContentGame(this.currentGame);
     this.bindEvents();
@@ -3339,19 +3341,13 @@ export default class DocumentApp {
     }));
   }
 
-  // Filter visible entries and sidebar items by search query.
+  // Delegate the search box and its options to the document search controller.
   doSearch(query) {
-    const q = String(query || "").trim().toLowerCase();
-    this.chains.forEach((chain) => {
-      const contentText = chain.bubbles
-        .map((bubble) => rawToPlainText(bubble.content.dataset.raw ?? serializeContent(bubble.content)))
-        .join("\n")
-        .toLowerCase();
-      const haystack = `${chain.labelInput.value}\n${chain.attrInput.value}\n${chain.bcmlLocale ?? ""}\n${chain.bcmlPath ?? ""}\n${contentText}`.toLowerCase();
-      const visible = !q || haystack.includes(q);
-      chain.section.hidden = !visible;
-      chain.sidebarItem.hidden = !visible;
-    });
+    this.documentSearch.filter(query);
+  }
+
+  // Keep BCML locale/path containers hidden when none of their entries match.
+  syncSearchGroups() {
     if (this.currentDocMode === DOC_MODE_BCML) {
       this.chainList.querySelectorAll(".msyt-path-group").forEach((group) => {
         group.hidden = !group.querySelector(".chain:not([hidden])");

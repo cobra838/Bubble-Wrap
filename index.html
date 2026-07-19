@@ -65,7 +65,19 @@ On export, the original soft-split line breaks are preserved. If the previous bu
         <option value="choice">Choice</option>
       </select>
       <div class="sep"></div>
-      <input id="search-box" type="text" placeholder="Search..." oninput="doSearch(this.value)" />
+      <div id="document-search">
+        <div class="document-search-row">
+          <div class="search-input-wrap">
+            <input id="search-box" type="text" placeholder="Find" autocomplete="off" />
+            <div class="search-options">
+              <button type="button" class="search-option" id="search-case" title="Match Case">Aa</button>
+              <button type="button" class="search-option" id="search-whole-word" title="Match Whole Word">ab</button>
+              <button type="button" class="search-option" id="search-regex" title="Use Regular Expression">.*</button>
+              <button type="button" class="search-option" id="search-tags" title="Search in tags">{{}}</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="meta-panel">

@@ -159,18 +159,67 @@ textarea {
   display: none;
 }
 
+#document-search {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.document-search-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.search-input-wrap {
+  position: relative;
+}
+
 #search-box {
   border: 1px solid #c8c4be;
   border-radius: 4px;
-  padding: 4px 8px;
+  width: 205px;
+  padding: 4px 88px 4px 8px;
   font-size: 12px;
-  width: 140px;
   background: #faf8f5;
 }
 
 #search-box:focus {
   outline: none;
   border-color: #446;
+}
+
+#search-box.invalid {
+  border-color: #b33;
+}
+
+.search-options {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  transform: translateY(-50%);
+}
+
+.search-option {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: #555;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.search-option:hover,
+.search-option.active {
+  background: #e8e4df;
+  border-color: #c8c4be;
+  color: #224;
 }
 
 .toolbar-label {
