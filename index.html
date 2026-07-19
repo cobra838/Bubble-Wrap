@@ -25,6 +25,7 @@
       <div class="sep"></div>
       <div id="file-drop" onclick="document.getElementById('file-input').click()">📂 Open <span class="file-open-botw">AEON / MSYT / BCML</span><span class="file-open-totk">AEON</span></div>
       <input type="file" id="file-input" accept=".yaml,.yml,.txt,.json,.msyt" />
+      <button class="tbtn" id="btn-settings" onclick="openSettings()">⚙</button>
       <div class="sep"></div>
       <button class="tbtn" id="btn-meta" onclick="toggleMeta()">⚙ Meta</button>
       <button class="tbtn" id="btn-export" onclick="exportYaml()">📋 Export</button>
@@ -125,6 +126,47 @@ On export, the original soft-split line breaks are preserved. If the previous bu
           </div>
         </div>
         <div id="compare-body"></div>
+      </div>
+    </div>
+
+    <div id="settings-modal" onclick="if(event.target===this)closeSettings()">
+      <div id="settings-box">
+        <h3>Import settings</h3>
+        <div class="settings-option">
+          <div class="te-row">
+            <label for="setting-disable-soft-split">Disable soft split</label>
+            <select id="setting-disable-soft-split">
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </select>
+          </div>
+          <div class="settings-description">When ✂ Auto-split is ON, creates {{pageBreak}} instead of soft splits.</div>
+        </div>
+        <div class="settings-option">
+          <div class="te-row">
+            <label for="setting-big-endian">Force bigEndian</label>
+            <select id="setting-big-endian">
+              <option value="">Do not change</option>
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </select>
+          </div>
+          <div class="settings-description">On import, changes bigEndian. If the selected value differs from the source value, swaps framesLo and framesHi in {{delay}} and {{autoAdvance}}. MSYT is treated as source bigEndian: true. Does not work with the BCML file format because one texts.json contains multiple source message files.</div>
+        </div>
+        <div class="settings-option">
+          <div class="te-row">
+            <label for="setting-has-atr1">Force hasATR1</label>
+            <select id="setting-has-atr1">
+              <option value="">Do not change</option>
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </select>
+          </div>
+          <div class="settings-description">On import, forces whether attributes are present. false removes all imported attributes. Does not work with the BCML file format because one texts.json contains multiple source message files.</div>
+        </div>
+        <div class="te-btns">
+          <button onclick="closeSettings()">Close</button>
+        </div>
       </div>
     </div>
 

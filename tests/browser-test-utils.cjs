@@ -330,10 +330,22 @@ async function configureAutoSplit(cdp, enabled) {
     if (isEnabled !== ${Boolean(enabled)}) window.toggleAutoSplit();
   })()`);
 }
+async function configureImportSettings(cdp, options) {
+  await cdp.evaluate(
+    `window.setImportSettings(${JSON.stringify({
+      disableSoftSplit: options.disableSoftSplit,
+      bigEndian: options.bigEndian,
+      hasATR1: options.hasATR1
+    })})`
+  );
+}
 function parseArguments(testName, sourceDescription, allowedGames) {
   const positional = [];
   let game = "BotW";
   let autoSplit = false;
+  let disableSoftSplit = false;
+  let bigEndian = null;
+  let hasATR1 = null;
   for (let index = 2; index < process.argv.length; index++) {
     const argument = process.argv[index];
     if (argument === "--game") {
@@ -348,18 +360,36 @@ function parseArguments(testName, sourceDescription, allowedGames) {
       autoSplit = value === "on";
       continue;
     }
+    if (argument === "--disable-soft-split") {
+      const value = String(process.argv[++index] || "").toLowerCase();
+      if (value !== "on" && value !== "off") throw new Error("--disable-soft-split must be on or off");
+      disableSoftSplit = value === "on";
+      continue;
+    }
+    if (argument === "--big-endian") {
+      const value = String(process.argv[++index] || "").toLowerCase();
+      if (value !== "true" && value !== "false") throw new Error("--big-endian must be true or false");
+      bigEndian = value === "true";
+      continue;
+    }
+    if (argument === "--has-atr1") {
+      const value = String(process.argv[++index] || "").toLowerCase();
+      if (value !== "true" && value !== "false") throw new Error("--has-atr1 must be true or false");
+      hasATR1 = value === "true";
+      continue;
+    }
     if (argument.startsWith("--")) throw new Error(`Unknown option: ${argument}`);
     positional.push(argument);
   }
   const sourceRootArg = positional[0];
   if (!sourceRootArg) {
-    console.error(`Usage: node tests/test-${testName}.cjs <${sourceDescription}-folder> [output-folder] [--game botw|totk] [--auto-split on|off]`);
+    console.error(`Usage: node tests/test-${testName}.cjs <${sourceDescription}-folder> [output-folder] [--game botw|totk] [--auto-split on|off] [--disable-soft-split on|off] [--big-endian true|false] [--has-atr1 true|false]`);
     process.exitCode = 1;
     return null;
   }
   if (positional.length > 2) throw new Error("Only an input folder and an optional output folder are allowed");
   if (!allowedGames.includes(game)) throw new Error(`${testName} supports only: ${allowedGames.join(", ")}`);
-  return { sourceRootArg, outputRootArg: positional[1], game, autoSplit };
+  return { sourceRootArg, outputRootArg: positional[1], game, autoSplit, disableSoftSplit, bigEndian, hasATR1 };
 }
 
 
@@ -373,7 +403,19 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
   }
   const outputRoot = path.resolve(options.outputRootArg || defaultOutputDirectory(sourceRoot, testName));
   const sourceFiles = findFiles(sourceRoot, accepts);
-  const report = { testName, sourceRoot, outputRoot, game: options.game, autoSplit: options.autoSplit, processed: [], differences: [], failures: [] };
+  const report = {
+    testName,
+    sourceRoot,
+    outputRoot,
+    game: options.game,
+    autoSplit: options.autoSplit,
+    disableSoftSplit: options.disableSoftSplit,
+    bigEndian: options.bigEndian,
+    hasATR1: options.hasATR1,
+    processed: [],
+    differences: [],
+    failures: []
+  };
   fs.mkdirSync(outputRoot, { recursive: true });
 
   console.log(`Input : ${sourceRoot}`);
@@ -381,6 +423,9 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
   console.log(`Found : ${sourceFiles.length} file(s)`);
   console.log(`Game  : ${options.game}`);
   console.log(`Auto-split: ${options.autoSplit ? "on" : "off"}`);
+  console.log(`Disable soft split: ${options.disableSoftSplit ? "on" : "off"}`);
+  console.log(`Force bigEndian: ${options.bigEndian == null ? "off" : options.bigEndian}`);
+  console.log(`Force hasATR1: ${options.hasATR1 == null ? "off" : options.hasATR1}`);
   const progressLine = createProgressLine(sourceFiles.length);
   let session = null;
   try {
@@ -392,6 +437,7 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
         }
         session = await launchBrowser(path.resolve(__dirname, ".."));
         await configureAutoSplit(session.cdp, options.autoSplit);
+        await configureImportSettings(session.cdp, options);
       }
       const sourcePath = sourceFiles[index];
       const relativePath = path.relative(sourceRoot, sourcePath);

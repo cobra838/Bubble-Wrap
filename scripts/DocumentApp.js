@@ -14,6 +14,7 @@ import {
 import { buildMsytBcmlJson, buildMsytYaml, isTagMappedToMsyt, parseMsytBcmlJson, parseMsytYaml } from "./MSYTFormat.js";
 import { getColorChoices, getColorCss, getTags, setGcfText } from "./GcfRegistry.js";
 import { canAutoSplitDocument, separatorForBubbleBoundary, splitRawAtLineLimit } from "./SplitPolicy.js";
+import ImportSettings from "./ImportSettings.js";
 
 const STORAGE_GAME_KEY = "bubble_wrap_game";
 const DOC_MODE_AEON = "aeon-yaml";
@@ -202,10 +203,10 @@ function msytHasATR1(chains) {
 }
 
 // Build the editable AEON-style metadata shown for an imported MSYT document.
-function buildAeonMetaFromMsyt(msytMeta, chains) {
+function buildAeonMetaFromMsyt(msytMeta, chains, bigEndian = true) {
   return [
     "%%%",
-    "bigEndian: true",
+    `bigEndian: ${bigEndian ? "true" : "false"}`,
     "bigEndianLabels: false",
     "version: 3",
     "encoding: utf-16",
@@ -238,6 +239,11 @@ function buildMsytMetaFromAeonMeta(msytMeta, aeonMeta, chains) {
       atr1_unknown: atr1Unknown
     }
   };
+}
+
+// Read the AEON bigEndian metadata value; absent means false.
+function hasBigEndian(yamlMeta) {
+  return /bigEndian:\s*true/.test(String(yamlMeta || ""));
 }
 
 // Decide whether AEON export should include attributeText/attribute.
@@ -795,6 +801,7 @@ export default class DocumentApp {
     this.btnAutosplit = document.getElementById("btn-autosplit");
     this.globalTypeSelect = document.getElementById("global-type-select");
     this.emptyAddBtn = document.getElementById("empty-add-btn");
+    this.importSettings = new ImportSettings();
 
     setRawContentGame(this.currentGame);
     this.bindEvents();
@@ -889,6 +896,7 @@ export default class DocumentApp {
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         this.surfaceDragSelection = null;
+        this.importSettings.close();
         this.closeTP();
         this.closeCompare();
         this.closeRaw();
@@ -913,6 +921,9 @@ export default class DocumentApp {
     window.filterTP = (query) => this.filterTP(query);
     window.tpKey = (event) => this.tpKey(event);
     window.toggleAutoSplit = () => this.toggleAutoSplit();
+    window.openSettings = () => this.importSettings.open();
+    window.closeSettings = () => this.importSettings.close();
+    window.setImportSettings = (settings) => this.importSettings.set(settings);
     window.applyGlobalType = (type) => this.applyGlobalType(type);
     window.doSearch = (query) => this.doSearch(query);
     window.openNC = () => this.createNewChain();
@@ -1750,12 +1761,13 @@ export default class DocumentApp {
     if (/^(?:---\n)?(?:\s*group_count:|\s*entries:)/m.test(trimmed)) {
       try {
         const doc = parseMsytYaml(normalized);
+        this.importSettings.applyMsyt(doc, parseInlineTag, buildInlineTag);
         this.currentDocMode = DOC_MODE_MSYT;
         this.exportMode = DOC_MODE_MSYT;
         this.yamlMeta = "";
         this.msytDocInfo = {
           msytMeta: doc.meta,
-          aeonMeta: buildAeonMetaFromMsyt(doc.meta, doc.entries)
+          aeonMeta: buildAeonMetaFromMsyt(doc.meta, doc.entries, this.importSettings.bigEndian ?? true)
         };
         this.selectGame("BotW");
         this.renderDoc(doc.entries);
@@ -1770,6 +1782,7 @@ export default class DocumentApp {
     }
 
     const doc = parseAeonYaml(normalized);
+    this.importSettings.applyAeon(doc, hasBigEndian(doc.yamlMeta), parseInlineTag, buildInlineTag);
     this.currentDocMode = DOC_MODE_AEON;
     this.exportMode = DOC_MODE_AEON;
     this.yamlMeta = doc.yamlMeta;
@@ -2967,7 +2980,7 @@ export default class DocumentApp {
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(bubbleRecord.chain);
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
-    const newBubble = this.addBubble(bubbleRecord.chain, overflowRaw, bubbleRecord, "softBreak");
+    const newBubble = this.addBubble(bubbleRecord.chain, overflowRaw, bubbleRecord, this.importSettings.autoSplitJoinKind());
     if (newBubble) this.autoSplitBubble(newBubble);
   }
 
