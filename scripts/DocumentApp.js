@@ -183,9 +183,61 @@ function getMsytGroupCount(msytMeta) {
   return Number.isFinite(value) ? value : 0;
 }
 
-// Build a minimal AEON meta block from msyt metadata.
-function buildAeonMetaFromMsyt(currentGame, msytMeta) {
-  return `%%%\nhasATR1: ${currentGame === "TotK" ? "false" : "true"}\nlabelGroups: ${getMsytGroupCount(msytMeta)}\n%%%\n`;
+// Read one boolean from an AEON metadata block.
+function getAeonMetaBoolean(meta, key, fallback) {
+  const match = String(meta || "").match(new RegExp(`^${key}:\\s*(true|false)\\s*$`, "m"));
+  return match ? match[1] === "true" : fallback;
+}
+
+// Read one integer from an AEON metadata block.
+function getAeonMetaInteger(meta, key, fallback) {
+  const match = String(meta || "").match(new RegExp(`^${key}:\\s*(-?\\d+)\\s*$`, "m"));
+  const value = Number(match?.[1]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+// MSYT has ATR1 when at least one entry has an attributes field, including attributes: "".
+function msytHasATR1(chains) {
+  return (chains || []).some((chain) => chain.msytHasAttributes || String(chain.attrVal || "") !== "");
+}
+
+// Build the editable AEON-style metadata shown for an imported MSYT document.
+function buildAeonMetaFromMsyt(msytMeta, chains) {
+  return [
+    "%%%",
+    "bigEndian: true",
+    "bigEndianLabels: false",
+    "version: 3",
+    "encoding: utf-16",
+    "hasNLI1: false",
+    "hasLBL1: true",
+    `labelGroups: ${getMsytGroupCount(msytMeta)}`,
+    `hasATR1: ${msytHasATR1(chains) ? "true" : "false"}`,
+    "hasATO1: false",
+    "hasTSY1: false",
+    "hasTXTW: false",
+    "%%%",
+    ""
+  ].join("\n");
+}
+
+// Convert editable AEON-style metadata back to the MSYT metadata that exists.
+function buildMsytMetaFromAeonMeta(msytMeta, aeonMeta, chains) {
+  const hasAttributes = getAeonMetaBoolean(aeonMeta, "hasATR1", msytHasATR1(chains));
+  const exportChains = chains.map((chain) => ({
+    ...chain,
+    attrVal: hasAttributes ? chain.attrVal : "",
+    msytHasAttributes: hasAttributes
+  }));
+  const atr1Unknown = hasAttributes ? exportChains.filter((chain) => String(chain.attrVal || "") === "").length : 0;
+  return {
+    chains: exportChains,
+    msytMeta: {
+      ...(msytMeta && typeof msytMeta === "object" ? msytMeta : {}),
+      group_count: getAeonMetaInteger(aeonMeta, "labelGroups", getMsytGroupCount(msytMeta)),
+      atr1_unknown: atr1Unknown
+    }
+  };
 }
 
 // Decide whether AEON export should include attributeText/attribute.
@@ -768,6 +820,10 @@ export default class DocumentApp {
     });
     this.metaTextarea.addEventListener("input", () => {
       if (this.currentDocMode === DOC_MODE_AEON) this.yamlMeta = this.metaTextarea.value;
+      if (this.currentDocMode === DOC_MODE_MSYT) {
+        this.msytDocInfo.aeonMeta = this.metaTextarea.value;
+        this.refreshChainModeUi();
+      }
     });
 
     document.body.addEventListener("dragover", (event) => {
@@ -887,8 +943,8 @@ export default class DocumentApp {
     const isMsyt = this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML;
     const onlyBcml = this.currentDocMode === DOC_MODE_BCML;
     const tagEnabled = this.currentDocMode === DOC_MODE_AEON || isMsyt;
-    this.metaBtn.disabled = isMsyt;
-    if (isMsyt) this.metaPanel.classList.remove("open");
+    this.metaBtn.disabled = onlyBcml;
+    if (onlyBcml) this.metaPanel.classList.remove("open");
     this.exportWrap.classList.toggle("show", this.currentGame === "BotW");
     this.btnExpYaml.style.display = onlyBcml ? "none" : "";
     this.btnExpMsyt.style.display = onlyBcml ? "none" : "";
@@ -911,12 +967,13 @@ export default class DocumentApp {
       this.metaTextarea.value = this.yamlMeta || "";
       return;
     }
-    this.metaTextarea.readOnly = true;
     if (this.currentDocMode === DOC_MODE_MSYT) {
-      this.metaTextarea.placeholder = "MSYT mode does not use a YAML meta block";
-      this.metaTextarea.value = stringifyMsytMeta(this.msytDocInfo.msytMeta);
+      this.metaTextarea.readOnly = false;
+      this.metaTextarea.placeholder = "AEON metadata for YAML export...";
+      this.metaTextarea.value = this.msytDocInfo.aeonMeta || buildAeonMetaFromMsyt(this.msytDocInfo.msytMeta, this.chains);
       return;
     }
+    this.metaTextarea.readOnly = true;
     this.metaTextarea.placeholder = "MSYT mode does not use a YAML meta block";
     this.metaTextarea.value = `defaultLocale: ${this.msytDocInfo.bcmlDefaultLocale}\ndefaultPath: ${
       this.msytDocInfo.bcmlDefaultPath
@@ -1697,7 +1754,8 @@ export default class DocumentApp {
         this.exportMode = DOC_MODE_MSYT;
         this.yamlMeta = "";
         this.msytDocInfo = {
-          msytMeta: doc.meta
+          msytMeta: doc.meta,
+          aeonMeta: buildAeonMetaFromMsyt(doc.meta, doc.entries)
         };
         this.selectGame("BotW");
         this.renderDoc(doc.entries);
@@ -1852,7 +1910,10 @@ export default class DocumentApp {
   // Refresh mode-dependent UI for all chains in one pass.
   refreshChainModeUi() {
     const aeonAttributeKey = this.exportMode === DOC_MODE_AEON ? getAeonAttributeKey(this.chains, this.currentDocMode) : null;
-    const showAttribute = hasATR1(this.currentGame, this.yamlMeta);
+    const showAttribute =
+      this.currentDocMode === DOC_MODE_MSYT
+        ? getAeonMetaBoolean(this.msytDocInfo.aeonMeta, "hasATR1", msytHasATR1(this.chains))
+        : hasATR1(this.currentGame, this.yamlMeta);
     this.chains.forEach((chain) => {
       chain.attrInput.placeholder = this.exportMode === DOC_MODE_AEON ? aeonAttributeKey : chain.attrKey || "attributes";
       chain.attrInput.style.display = showAttribute ? "" : "none";
@@ -3286,7 +3347,9 @@ export default class DocumentApp {
     const meta =
       this.currentDocMode === DOC_MODE_AEON
         ? this.metaTextarea.value || this.yamlMeta
-        : this.yamlMeta || buildAeonMetaFromMsyt(this.currentGame, this.msytDocInfo.msytMeta);
+        : this.currentDocMode === DOC_MODE_MSYT
+          ? this.msytDocInfo.aeonMeta || this.metaTextarea.value || buildAeonMetaFromMsyt(this.msytDocInfo.msytMeta, chains)
+          : this.yamlMeta || buildAeonMetaFromMsyt(this.msytDocInfo.msytMeta, chains);
     let output = meta ? `${meta}\n` : "";
     const includeAttribute = hasATR1(this.currentGame, meta);
     const aeonAttrKey = getAeonAttributeKey(chains, this.currentDocMode);
@@ -3314,7 +3377,7 @@ export default class DocumentApp {
     try {
       const mode = this.getEffectiveExportMode();
       const aeonAttrKey = getAeonAttributeKey(chains, this.currentDocMode);
-      const exportChains =
+      let exportChains =
         this.currentDocMode === DOC_MODE_AEON && mode !== DOC_MODE_AEON
           ? chains.map((chain) => ({
               ...chain,
@@ -3322,7 +3385,7 @@ export default class DocumentApp {
               msytHasAttributes: aeonAttrKey === "attributeText"
             }))
           : chains;
-      const msytDocInfo =
+      let msytDocInfo =
         this.currentDocMode === DOC_MODE_AEON
           ? {
               ...this.msytDocInfo,
@@ -3332,6 +3395,12 @@ export default class DocumentApp {
               }
             }
           : this.msytDocInfo;
+      if (this.currentDocMode === DOC_MODE_MSYT && mode === DOC_MODE_MSYT) {
+        const aeonMeta = this.msytDocInfo.aeonMeta || this.metaTextarea.value;
+        const converted = buildMsytMetaFromAeonMeta(this.msytDocInfo.msytMeta, aeonMeta, exportChains);
+        exportChains = converted.chains;
+        msytDocInfo = { ...this.msytDocInfo, msytMeta: converted.msytMeta };
+      }
       let output = "";
       if (this.currentDocMode === DOC_MODE_BCML) output = buildMsytBcmlJson(exportChains, msytDocInfo, this.currentGame);
       else if (mode === DOC_MODE_AEON) output = this.buildAeonYaml(exportChains);
