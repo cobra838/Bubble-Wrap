@@ -6,7 +6,7 @@ runExportTest({
   testName: "yaml-to-msyt",
   sourceDescription: "yaml",
   accepts: (name) => /\.ya?ml$/i.test(name),
-  targetMode: "msyt-yaml",
+  targetMode: "msyt",
   targetExtension: ".msyt",
   allowedGames: ["BotW"]
 }).catch((error) => {

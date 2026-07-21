@@ -6,7 +6,7 @@ runExportTest({
   testName: "bcml",
   sourceDescription: "bcml",
   accepts: (name) => /\.json$/i.test(name),
-  targetMode: "msyt-bcml",
+  targetMode: "bcml-msyt",
   targetExtension: ".json",
   allowedGames: ["BotW"],
   preserveSourceExtension: true,

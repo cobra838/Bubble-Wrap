@@ -6,7 +6,7 @@ runExportTest({
   testName: "msyt",
   sourceDescription: "msyt",
   accepts: (name) => /\.msyt$/i.test(name),
-  targetMode: "msyt-yaml",
+  targetMode: "msyt",
   targetExtension: ".msyt",
   allowedGames: ["BotW"],
   preserveSourceExtension: true,

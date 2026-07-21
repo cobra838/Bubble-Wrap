@@ -20,8 +20,8 @@ import DocumentSearch from "./DocumentSearch.js";
 
 const STORAGE_GAME_KEY = "bubble_wrap_game";
 const DOC_MODE_AEON = "aeon-yaml";
-const DOC_MODE_MSYT = "msyt-yaml";
-const DOC_MODE_BCML = "msyt-bcml";
+const DOC_MODE_MSYT = "msyt";
+const DOC_MODE_BCML = "bcml-msyt";
 
 // Escape text for safe HTML insertion.
 function escapeHtml(value) {
@@ -272,7 +272,6 @@ function getVisibleTextLength(node) {
   if (!node) return 0;
   if (node.nodeType === Node.TEXT_NODE) return node.textContent.length;
   if (node.nodeType !== Node.ELEMENT_NODE) return 0;
-  if (node.classList?.contains("line-tail-marker")) return 0;
   if (node.dataset?.rawTag !== undefined) return 0;
   if (node.tagName === "BR") return 0;
   let total = 0;
@@ -291,9 +290,6 @@ function getVisibleOffsetWithinNode(node, targetNode, targetOffset) {
       if (current.nodeType === Node.TEXT_NODE) {
         total += Math.min(targetOffset, current.textContent.length);
       } else if (current.nodeType === Node.ELEMENT_NODE) {
-        if (current.classList?.contains("line-tail-marker")) {
-          return;
-        }
         if (current.dataset?.rawTag !== undefined) {
           return;
         }
@@ -314,7 +310,6 @@ function getVisibleOffsetWithinNode(node, targetNode, targetOffset) {
       return;
     }
     if (current.nodeType !== Node.ELEMENT_NODE) return;
-    if (current.classList?.contains("line-tail-marker")) return;
     if (current.dataset?.rawTag !== undefined) return;
     if (current.tagName === "BR") {
       return;
@@ -1970,23 +1965,23 @@ export default class DocumentApp {
     const pathValue = path;
 
     let localeSection = [...this.chainList.children].find(
-      (element) => element.classList?.contains("msyt-locale-group") && element.dataset.locale === localeValue && (!localeGroupId || element.dataset.groupId === localeGroupId)
+      (element) => element.classList?.contains("bcml-locale-group") && element.dataset.locale === localeValue && (!localeGroupId || element.dataset.groupId === localeGroupId)
     );
     let sidebarLocaleSection = [...this.sidebar.children].find(
-      (element) => element.classList?.contains("sb-tree-locale") && element.dataset.locale === localeValue && (!localeGroupId || element.dataset.groupId === localeGroupId)
+      (element) => element.classList?.contains("bcml-sidebar-locale-group") && element.dataset.locale === localeValue && (!localeGroupId || element.dataset.groupId === localeGroupId)
     );
 
     if (!localeSection) {
       localeSection = document.createElement("section");
-      localeSection.className = "msyt-locale-group";
+      localeSection.className = "bcml-locale-group";
       localeSection.dataset.locale = localeValue;
       localeSection.dataset.groupId = localeGroupId || localeValue;
 
       const localeHeader = document.createElement("div");
-      localeHeader.className = "msyt-locale-hdr";
+      localeHeader.className = "bcml-locale-header";
 
       const localeTitle = document.createElement("div");
-      localeTitle.className = "msyt-locale-title";
+      localeTitle.className = "bcml-locale-title";
       localeTitle.textContent = localeValue;
 
       const localeDelete = document.createElement("button");
@@ -2001,12 +1996,12 @@ export default class DocumentApp {
       this.chainList.appendChild(localeSection);
 
       sidebarLocaleSection = document.createElement("section");
-      sidebarLocaleSection.className = "sb-tree-locale";
+      sidebarLocaleSection.className = "bcml-sidebar-locale-group";
       sidebarLocaleSection.dataset.locale = localeValue;
       sidebarLocaleSection.dataset.groupId = localeGroupId || localeValue;
 
       const sidebarLocaleTitle = document.createElement("div");
-      sidebarLocaleTitle.className = "sb-tree-locale-title";
+      sidebarLocaleTitle.className = "bcml-sidebar-locale-title";
       sidebarLocaleTitle.textContent = localeValue;
       sidebarLocaleSection.appendChild(sidebarLocaleTitle);
       this.sidebar.appendChild(sidebarLocaleSection);
@@ -2015,24 +2010,24 @@ export default class DocumentApp {
     }
 
     let pathSection = [...localeSection.children].find(
-      (element) => element.classList?.contains("msyt-path-group") && element.dataset.path === pathValue && (!pathGroupId || element.dataset.groupId === pathGroupId)
+      (element) => element.classList?.contains("bcml-path-group") && element.dataset.path === pathValue && (!pathGroupId || element.dataset.groupId === pathGroupId)
     );
     let sidebarPathSection = [...sidebarLocaleSection.children].find(
-      (element) => element.classList?.contains("sb-tree-path") && element.dataset.path === pathValue && (!pathGroupId || element.dataset.groupId === pathGroupId)
+      (element) => element.classList?.contains("bcml-sidebar-path-group") && element.dataset.path === pathValue && (!pathGroupId || element.dataset.groupId === pathGroupId)
     );
 
     if (!pathSection) {
       pathSection = document.createElement("section");
-      pathSection.className = "msyt-path-group";
+      pathSection.className = "bcml-path-group";
       pathSection.dataset.locale = localeValue;
       pathSection.dataset.path = pathValue;
       pathSection.dataset.groupId = pathGroupId || pathValue;
 
       const pathHeader = document.createElement("div");
-      pathHeader.className = "msyt-path-hdr";
+      pathHeader.className = "bcml-path-header";
 
       const pathTitle = document.createElement("div");
-      pathTitle.className = "msyt-path-title";
+      pathTitle.className = "bcml-path-title";
       pathTitle.textContent = pathValue;
 
       const pathDelete = document.createElement("button");
@@ -2047,17 +2042,17 @@ export default class DocumentApp {
       localeSection.appendChild(pathSection);
 
       sidebarPathSection = document.createElement("section");
-      sidebarPathSection.className = "sb-tree-path";
+      sidebarPathSection.className = "bcml-sidebar-path-group";
       sidebarPathSection.dataset.locale = localeValue;
       sidebarPathSection.dataset.path = pathValue;
       sidebarPathSection.dataset.groupId = pathGroupId || pathValue;
 
       const sidebarPathTitle = document.createElement("div");
-      sidebarPathTitle.className = "sb-tree-path-title";
+      sidebarPathTitle.className = "bcml-sidebar-path-title";
       sidebarPathTitle.textContent = pathValue;
 
       const sidebarItems = document.createElement("div");
-      sidebarItems.className = "sb-tree-items";
+      sidebarItems.className = "bcml-sidebar-items";
 
       sidebarPathSection.appendChild(sidebarPathTitle);
       sidebarPathSection.appendChild(sidebarItems);
@@ -2070,7 +2065,7 @@ export default class DocumentApp {
 
     return {
       parent: pathSection,
-      sidebarParent: sidebarPathSection.querySelector(".sb-tree-items"),
+      sidebarParent: sidebarPathSection.querySelector(".bcml-sidebar-items"),
       localeSection,
       pathSection,
       sidebarLocaleSection,
@@ -2086,7 +2081,7 @@ export default class DocumentApp {
       chain.pathSection.remove();
       chain.sidebarPathSection?.remove();
     }
-    if (chain.localeSection && !chain.localeSection.querySelector(".msyt-path-group")) {
+    if (chain.localeSection && !chain.localeSection.querySelector(".bcml-path-group")) {
       chain.localeSection.remove();
       chain.sidebarLocaleSection?.remove();
     }
@@ -2116,7 +2111,7 @@ export default class DocumentApp {
     doomed.forEach((chain) => this.removeChain(chain));
     pathSection.remove();
     sidebarPathSection?.remove();
-    if (localeSection && !localeSection.querySelector(".msyt-path-group")) {
+    if (localeSection && !localeSection.querySelector(".bcml-path-group")) {
       localeSection.remove();
       sidebarLocaleSection?.remove();
     }
@@ -3349,17 +3344,17 @@ export default class DocumentApp {
   // Keep BCML locale/path containers hidden when none of their entries match.
   syncSearchGroups() {
     if (this.currentDocMode === DOC_MODE_BCML) {
-      this.chainList.querySelectorAll(".msyt-path-group").forEach((group) => {
+      this.chainList.querySelectorAll(".bcml-path-group").forEach((group) => {
         group.hidden = !group.querySelector(".chain:not([hidden])");
       });
-      this.chainList.querySelectorAll(".msyt-locale-group").forEach((group) => {
-        group.hidden = !group.querySelector(".msyt-path-group:not([hidden])");
+      this.chainList.querySelectorAll(".bcml-locale-group").forEach((group) => {
+        group.hidden = !group.querySelector(".bcml-path-group:not([hidden])");
       });
-      this.sidebar.querySelectorAll(".sb-tree-path").forEach((group) => {
+      this.sidebar.querySelectorAll(".bcml-sidebar-path-group").forEach((group) => {
         group.hidden = !group.querySelector(".sb-item:not([hidden])");
       });
-      this.sidebar.querySelectorAll(".sb-tree-locale").forEach((group) => {
-        group.hidden = !group.querySelector(".sb-tree-path:not([hidden])");
+      this.sidebar.querySelectorAll(".bcml-sidebar-locale-group").forEach((group) => {
+        group.hidden = !group.querySelector(".bcml-sidebar-path-group:not([hidden])");
       });
     }
   }

@@ -4,7 +4,7 @@ const BCML_AUTO_SPLIT_PATHS = ["EventFlowMsg/", "DemoMsg/"];
 
 // BCML may auto-split only message files whose paths support this behavior.
 export function canAutoSplitDocument(documentMode, path = "") {
-  if (documentMode !== "msyt-bcml") return true;
+  if (documentMode !== "bcml-msyt") return true;
   const value = String(path || "");
   return BCML_AUTO_SPLIT_PATHS.some((prefix) => value.startsWith(prefix));
 }

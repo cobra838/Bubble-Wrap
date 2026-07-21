@@ -214,7 +214,6 @@ export function contentToPlainText(contentEl) {
     .map((block) => {
       if (block.nodeType === Node.TEXT_NODE) return block.textContent || "";
       if (block.nodeType !== Node.ELEMENT_NODE) return "";
-      if (block.classList?.contains("line-tail-marker")) return "";
       return block.textContent || "";
     })
     .join("\n");
