@@ -335,7 +335,9 @@ async function configureImportSettings(cdp, options) {
     `window.setImportSettings(${JSON.stringify({
       disableSoftSplit: options.disableSoftSplit,
       bigEndian: options.bigEndian,
-      hasATR1: options.hasATR1
+      hasATR1: options.hasATR1,
+      trimEmpty: options.trimEmptyOnImport,
+      fixDelaySpacing: options.fixDelaySpacingOnImport
     })})`
   );
 }
@@ -364,6 +366,8 @@ function parseArguments(testName, sourceDescription, allowedGames) {
   let trimEmpty = false;
   let swapDelayFrames = false;
   let fixDelaySpacing = false;
+  let trimEmptyOnImport = false;
+  let fixDelaySpacingOnImport = false;
   for (let index = 2; index < process.argv.length; index++) {
     const argument = process.argv[index];
     if (argument === "--game") {
@@ -396,6 +400,18 @@ function parseArguments(testName, sourceDescription, allowedGames) {
       hasATR1 = value === "true";
       continue;
     }
+    if (argument === "--trim-empty-on-import") {
+      const value = String(process.argv[++index] || "").toLowerCase();
+      if (value !== "true" && value !== "false") throw new Error("--trim-empty-on-import must be true or false");
+      trimEmptyOnImport = value === "true";
+      continue;
+    }
+    if (argument === "--fix-delay-spacing-on-import") {
+      const value = String(process.argv[++index] || "").toLowerCase();
+      if (value !== "true" && value !== "false") throw new Error("--fix-delay-spacing-on-import must be true or false");
+      fixDelaySpacingOnImport = value === "true";
+      continue;
+    }
     if (argument === "--force-page-breaks") {
       forcePageBreaks = true;
       continue;
@@ -421,13 +437,13 @@ function parseArguments(testName, sourceDescription, allowedGames) {
   }
   const sourceRootArg = positional[0];
   if (!sourceRootArg) {
-    console.error(`Usage: node tests/test-${testName}.cjs <${sourceDescription}-folder> [output-folder] [--game botw|totk] [--auto-split on|off] [--disable-soft-split on|off] [--big-endian true|false] [--has-atr1 true|false] [--force-page-breaks] [--collapse-soft-splits] [--trim-empty] [--swap-delay-frames] [--fix-delay-spacing]`);
+    console.error(`Usage: node tests/test-${testName}.cjs <${sourceDescription}-folder> [output-folder] [--game botw|totk] [--auto-split on|off] [--disable-soft-split on|off] [--big-endian true|false] [--has-atr1 true|false] [--trim-empty-on-import true|false] [--fix-delay-spacing-on-import true|false] [--force-page-breaks] [--collapse-soft-splits] [--trim-empty] [--swap-delay-frames] [--fix-delay-spacing]`);
     process.exitCode = 1;
     return null;
   }
   if (positional.length > 2) throw new Error("Only an input folder and an optional output folder are allowed");
   if (!allowedGames.includes(game)) throw new Error(`${testName} supports only: ${allowedGames.join(", ")}`);
-  return { sourceRootArg, outputRootArg: positional[1], game, autoSplit, disableSoftSplit, bigEndian, hasATR1, forcePageBreaks, collapseSoftSplits, trimEmpty, swapDelayFrames, fixDelaySpacing };
+  return { sourceRootArg, outputRootArg: positional[1], game, autoSplit, disableSoftSplit, bigEndian, hasATR1, trimEmptyOnImport, fixDelaySpacingOnImport, forcePageBreaks, collapseSoftSplits, trimEmpty, swapDelayFrames, fixDelaySpacing };
 }
 
 
@@ -450,6 +466,8 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
     disableSoftSplit: options.disableSoftSplit,
     bigEndian: options.bigEndian,
     hasATR1: options.hasATR1,
+    trimEmptyOnImport: options.trimEmptyOnImport,
+    fixDelaySpacingOnImport: options.fixDelaySpacingOnImport,
     forcePageBreaks: options.forcePageBreaks,
     collapseSoftSplits: options.collapseSoftSplits,
     trimEmpty: options.trimEmpty,
@@ -469,6 +487,8 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
   console.log(`Disable soft split: ${options.disableSoftSplit ? "on" : "off"}`);
   console.log(`Force bigEndian: ${options.bigEndian == null ? "off" : options.bigEndian}`);
   console.log(`Force hasATR1: ${options.hasATR1 == null ? "off" : options.hasATR1}`);
+  console.log(`Trim empty on import: ${options.trimEmptyOnImport}`);
+  console.log(`Fix delay spacing on import: ${options.fixDelaySpacingOnImport}`);
   console.log(`Bulk actions: page breaks ${options.forcePageBreaks ? "on" : "off"}; collapse ${options.collapseSoftSplits ? "on" : "off"}; trim ${options.trimEmpty ? "on" : "off"}; swap delay ${options.swapDelayFrames ? "on" : "off"}; delay spacing ${options.fixDelaySpacing ? "on" : "off"}`);
   const progressLine = createProgressLine(sourceFiles.length);
   let session = null;

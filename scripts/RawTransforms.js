@@ -1,3 +1,5 @@
+// Shared raw-text transformation helpers for ImportSettings and BulkActions.
+
 // Swap 16-bit frame fields in raw delay tags without changing other arguments.
 export function swapRawFrameEndian(raw, parseInlineTag, buildInlineTag, tagNames = ["delay", "autoAdvance"]) {
   const names = new Set(tagNames);

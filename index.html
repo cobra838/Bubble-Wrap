@@ -32,7 +32,7 @@
       <button class="tbtn" id="btn-compare" onclick="startCompare()" oncontextmenu="openCompareMenu(event)">Compare</button>
       <input type="file" id="compare-file-input" accept=".yaml,.yml,.txt,.json,.msyt" />
       <div id="compare-menu">
-        <label>Files per comparison <input id="compare-files-per-group" type="number" min="1" value="2" /></label>
+        <label>Files per comparison <input id="compare-files-per-group" type="number" min="1" value="1" /></label>
         <label>Comparisons <input id="compare-group-count" type="number" min="1" value="1" /></label>
         <div class="compare-menu-note" id="compare-menu-note"></div>
         <button type="button" class="tbtn" id="compare-menu-start">Start</button>
@@ -46,6 +46,7 @@
       <button class="tbtn" id="btn-tag" onclick="openTP()">＋ Tag</button>
       <button class="tbtn" id="btn-autosplit" onclick="toggleAutoSplit()" title="Splits the original text in an imported file with 4 or more consecutive \n-separated lines into separate 3-line bubbles, creating soft splits between them.
 Only applies when importing a file.
+When Auto-split is OFF: Two bubbles joined by a soft split → one bubble with a regular \n between their text.
 The game has two ways to split text into bubbles: 1) with \n after three lines, when the fourth line begins; 2) with the GCF {{pageBreak}} tag (MSBT HEX 00 04) after any line.
 Bubble Wrap uses the term “soft split” for boundaries created by \n after the third line.
 On export, the original soft-split line breaks are preserved. If the previous bubble has other than 3 lines after editing, soft-split line breaks are automatically replaced with {{pageBreak}}.">✂ Auto-split: ON</button>
@@ -141,7 +142,17 @@ On export, the original soft-split line breaks are preserved. If the previous bu
               <option value="true">true</option>
             </select>
           </div>
-          <div class="settings-description">When ✂ Auto-split is ON, creates {{pageBreak}} instead of soft splits.</div>
+          <div class="settings-description">When ✂ Auto-split is ON, creates {{pageBreak}} instead of soft splits. Soft split → {{pageBreak}}</div>
+        </div>
+        <div class="settings-option">
+          <div class="te-row">
+            <label for="setting-trim-empty">Trim empty</label>
+            <select id="setting-trim-empty">
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </select>
+          </div>
+          <div class="settings-description">\n\nText\n\n → Text. Blank lines in the middle stay unchanged.</div>
         </div>
         <div class="settings-option">
           <div class="te-row">
@@ -152,7 +163,7 @@ On export, the original soft-split line breaks are preserved. If the previous bu
               <option value="true">true</option>
             </select>
           </div>
-          <div class="settings-description">On import, changes bigEndian. If the selected value differs from the source value, swaps framesLo and framesHi in {{delay}} and {{autoAdvance}}. MSYT is treated as source bigEndian: true. Does not work with the BCML file format because one texts.json contains multiple source message files.</div>
+          <div class="settings-description">On import, changes bigEndian. If the selected value differs from the source value for delay and autoAdvance: {{delay framesLo="0" framesHi="255"}} → {{delay framesLo="255" framesHi="0"}}. MSYT is treated as source bigEndian: true. Does not work with the BCML file format because one texts.json contains multiple source message files.</div>
         </div>
         <div class="settings-option">
           <div class="te-row">
@@ -164,6 +175,16 @@ On export, the original soft-split line breaks are preserved. If the previous bu
             </select>
           </div>
           <div class="settings-description">On import, forces whether attributes are present. false removes all imported attributes. Does not work with the BCML file format because one texts.json contains multiple source message files.</div>
+        </div>
+        <div class="settings-option">
+          <div class="te-row">
+            <label for="setting-fix-delay-spacing">Fix delay spacing</label>
+            <select id="setting-fix-delay-spacing">
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </select>
+          </div>
+          <div class="settings-description">"Text {{delayxx}}text" → "Text{{delayxx}} text"</div>
         </div>
         <div class="te-btns">
           <button onclick="closeSettings()">Close</button>

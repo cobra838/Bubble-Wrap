@@ -753,7 +753,7 @@ export default class DocumentApp {
     this.documentRenderId = 0;
     this.compareState = null;
     this.pendingCompareFiles = [];
-    this.compareFilesPerGroup = 2;
+    this.compareFilesPerGroup = 1;
     this.compareGroupCount = 1;
     this.compareLayout = "unified";
     this.activeCompareIssues = null;
@@ -1743,6 +1743,7 @@ export default class DocumentApp {
     if (trimmed.startsWith("{")) {
       try {
         const doc = parseMsytBcmlJson(normalized);
+        this.importSettings.applyBcml(doc);
         this.currentDocMode = DOC_MODE_BCML;
         this.exportMode = DOC_MODE_BCML;
         this.yamlMeta = "";
@@ -1753,6 +1754,8 @@ export default class DocumentApp {
         };
         this.selectGame("BotW");
         this.renderDoc(doc.entries);
+        // Auto-split runs after import settings, so reuse BulkActions.trimEmpty() for its new bubbles.
+        if (this.importSettings.trimEmpty) this.bulkActions.trimEmpty();
         this.syncDocModeUi();
         this.syncMetaPanel();
         this.setStatus(`Loaded BCML texts.json with ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
@@ -1777,6 +1780,8 @@ export default class DocumentApp {
         };
         this.selectGame("BotW");
         this.renderDoc(doc.entries);
+        // Auto-split runs after import settings, so reuse BulkActions.trimEmpty() for its new bubbles.
+        if (this.importSettings.trimEmpty) this.bulkActions.trimEmpty();
         this.syncDocModeUi();
         this.syncMetaPanel();
         this.setStatus(`Loaded .msyt with ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
@@ -1798,6 +1803,8 @@ export default class DocumentApp {
     if (this.yamlMeta.includes("hasATR1: true")) this.selectGame("BotW");
     else if (this.yamlMeta.includes("hasATR1: false")) this.selectGame("TotK");
     this.renderDoc(doc.entries);
+    // Auto-split runs after import settings, so reuse BulkActions.trimEmpty() for its new bubbles.
+    if (this.importSettings.trimEmpty) this.bulkActions.trimEmpty();
     this.syncDocModeUi();
     this.syncMetaPanel();
     this.setStatus(`Loaded ${doc.entries.length} entr${doc.entries.length === 1 ? "y" : "ies"}`);
