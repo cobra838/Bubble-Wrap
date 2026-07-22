@@ -18,7 +18,7 @@ export default {
     className: "dialogue",
     label: "NPC",
     charLimit: null,
-    scrollWidth: 520,
+    scrollWidth: 552,
     lineCount: 3,
     isSingleton: false
   },
@@ -26,16 +26,16 @@ export default {
     className: "signboard",
     label: "Sign",
     charLimit: null,
-    scrollWidth: 520,
+    scrollWidth: 552,
     lineCount: 3,
     isSingleton: false
   },
   item: {
     className: "item",
     label: "Item",
-    charLimit: 204,
+    charLimit: null,
     scrollWidth: null,
-    lineCount: 4,
+    lineCount: 5,
     isSingleton: true
   },
   compendium: {
@@ -62,14 +62,6 @@ export default {
     lineCount: 8,
     isSingleton: true
   },
-  choice: {
-    className: "choice",
-    label: "Choice",
-    charLimit: null,
-    scrollWidth: null,
-    lineCount: 1,
-    isSingleton: false
-  },
   tip: {
     className: "tip",
     label: "Tip",
@@ -77,6 +69,13 @@ export default {
     scrollWidth: null,
     lineCount: 3,
     isSingleton: true
+  },
+  choice: {
+    className: "choice",
+    label: "Choice",
+    charLimit: null,
+    scrollWidth: null,
+    lineCount: 1,
+    isSingleton: false
   }
 };
-// TODO: Test for what actual `charLimit` values are

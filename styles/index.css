@@ -623,7 +623,7 @@ textarea {
   gap: 0;
 }
 .bubble-outer {
-  width: 574px;
+  width: 50%;
   margin: 0 auto;
 }
 
@@ -741,31 +741,29 @@ textarea {
 }
 
 .bubble-content {
-  box-sizing: border-box;
-  position: relative;
-  line-height: 1.25;
-  font-size: 19.5px;
   font-family: "Calamity", serif;
-  color: var(--bubble-text);
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+  color: var(--bubble-text);
   white-space: pre;
-  overflow: visible;
-  overflow-wrap: normal;
-  max-height: 100%;
-  scrollbar-width: none;
+  /* max-height: 100%; */
+  /* box-sizing: border-box; */
+  /* position: relative; */
+  /* overflow: visible; */
+  /* overflow-wrap: normal; */
+  /* scrollbar-width: none; */
 }
 
 .bubble.dialogue,
 .bubble[data-type="dialogue"] {
-  width: 574px;
-  height: 107px;
-  border-radius: calc(107px / 2);
+  width: 608px;
+  height: 125px;
+  border-radius: calc(125px / 2);
 }
 
 .bubble.signboard,
 .bubble[data-type="signboard"] {
-  width: 574px;
-  height: 107px;
+  width: 608px;
+  height: 125px;
   border-radius: 6px;
 }
 
@@ -773,26 +771,26 @@ textarea {
 .bubble.signboard .bubble-content,
 .bubble[data-type="dialogue"] .bubble-content,
 .bubble[data-type="signboard"] .bubble-content {
-  padding-inline: calc((100% - 438px) / 2);
   font-weight: bold;
-  width: auto;
-  min-width: 0;
+  font-size: 20.8px;
+  line-height: 1.3;
 }
 
 .bubble.item,
 .bubble[data-type="item"] {
-  width: 498px;
-  height: 140px;
-  border-radius: 6px;
+  width: 410px;
+  height: 135px;
+  border-radius: 8px;
 }
 
 .bubble.item .bubble-content,
 .bubble[data-type="item"] .bubble-content {
+  font-size: 15.8px;
+  line-height: 1.2;
   width: 100%;
-  min-width: 0;
-  padding: 20px;
-  text-align: left;
   align-self: flex-start;
+  padding-top: 20px;
+  padding-left: 23px;
 }
 
 .bubble.compendium,
@@ -802,24 +800,55 @@ textarea {
   border-radius: 6px;
 }
 
+.bubble.compendium .bubble-content,
+.bubble[data-type="compendium"] .bubble-content {
+  font-size: 18px;
+  line-height: 1.27;
+  width: 100%;
+  align-self: flex-start;
+  padding-top: 20px;
+  padding-left: 23px;
+}
+
+
 .bubble.questBOTW,
 .bubble[data-type="questBOTW"] {
-  width: 498px;
-  height: 315px;
+  width: 620px;
+  height: 330px;
   border-radius: 6px;
 }
 
+.bubble.questBOTW .bubble-content,
+.bubble[data-type="questBOTW"] .bubble-content {
+  font-size: 18px;
+  line-height: 1.27;
+  width: 100%;
+  align-self: flex-start;
+  padding-top: 20px;
+  padding-left: 23px;
+}
+
+/* Not check for TOTK */
 .bubble.questTOTK,
 .bubble[data-type="questTOTK"] {
-  width: 498px;
-  height: 240px;
+  width: 620px;
+  height: 255px;
   border-radius: 6px;
+}
+
+.bubble.questTOTK .bubble-content,
+.bubble[data-type="questTOTK"] .bubble-content {
+  font-size: 18px;
+  line-height: 1.27;
+  width: 100%;
+  align-self: flex-start;
+  padding-top: 20px;
+  padding-left: 23px;
 }
 
 .bubble.tip,
 .bubble[data-type="tip"] {
   width: 634px;
-  /* max-width: 634px; */
   min-height: 100px;
   height: auto;
   border-radius: 6px;
@@ -829,40 +858,26 @@ textarea {
 .bubble[data-type="tip"] .bubble-content {
   font-size: 16px;
   font-weight: 700;
+  width: 100%;
+  align-self: flex-start;
+  padding-top: 20px;
+  padding-left: 23px;
 }
 
 .bubble.choice,
 .bubble[data-type="choice"] {
-  width: calc(410px * 2 / 3);
-  min-height: calc(74px * 2 / 3);
-  height: calc(74px * 2 / 3);
-  border-radius: calc(74px / 3);
+  width: 238px;
+  height: 42px;
+  border-radius: calc(238px / 2);
   background: rgba(20, 40, 80, 0.55);
 }
 
 .bubble.choice .bubble-content,
 .bubble[data-type="choice"] .bubble-content {
-  width: 100%;
-  padding-left: calc(33px * 2 / 3);
-  padding-right: 0;
-  text-align: left;
-  min-width: 0;
   font-weight: bold;
-}
-
-.bubble.item .bubble-content,
-.bubble.questBOTW .bubble-content,
-.bubble.questTOTK .bubble-content,
-.bubble.compendium .bubble-content,
-.bubble.tip .bubble-content,
-.bubble[data-type="item"] .bubble-content,
-.bubble[data-type="questBOTW"] .bubble-content,
-.bubble[data-type="questTOTK"] .bubble-content,
-.bubble[data-type="compendium"] .bubble-content,
-.bubble[data-type="tip"] .bubble-content {
+  font-size: 17.8px;
   width: 100%;
-  padding: 20px;
-  align-self: flex-start;
+  padding-left: calc(27.5px * 2 / 3);
 }
 
 /* BOTW color */
