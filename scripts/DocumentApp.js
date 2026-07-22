@@ -994,10 +994,10 @@ export default class DocumentApp {
     }\n`;
   }
 
-  // Switch between BotW and TotK, with MSYT guard rails.
+  // Switch between BotW and TotK; BCML is BotW-only.
   selectGame(game) {
-    if ((this.currentDocMode === DOC_MODE_MSYT || this.currentDocMode === DOC_MODE_BCML) && game !== "BotW") {
-      this.setStatus("⚠ MSYT is supported only for BotW");
+    if (this.currentDocMode === DOC_MODE_BCML && game !== "BotW") {
+      this.setStatus("⚠ BCML is supported only for BotW");
       game = "BotW";
     }
     this.currentGame = game;
