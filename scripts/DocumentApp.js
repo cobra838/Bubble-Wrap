@@ -17,6 +17,17 @@ import { canAutoSplitDocument, separatorForBubbleBoundary, splitRawAtLineLimit }
 import ImportSettings from "./ImportSettings.js";
 import BulkActions from "./BulkActions.js";
 import DocumentSearch from "./DocumentSearch.js";
+import {
+  getBoundaryTagForInput,
+  normalizeLeadingFormatDeletion,
+  inferCollapsedCaretBias,
+  capturePendingInputEdit,
+  getSelectionTextOffsets,
+  setCaretAtVisibleOffset,
+  setSelectionVisibleOffsets,
+  placeCaretFromPoint,
+  getVisibleOffsetFromPoint
+} from "./Caret.js";
 
 const STORAGE_GAME_KEY = "bubble_wrap_game";
 const DOC_MODE_AEON = "aeon-yaml";
@@ -254,120 +265,7 @@ function getAeonAttributeKey(chains, currentDocMode) {
   return list.some((chain) => String(chain?.attrVal || "").trim() !== "") ? "attributeText" : "attribute";
 }
 
-// Count visible text length for a node tree.
-function getVisibleTextLength(node) {
-  if (!node) return 0;
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent.length;
-  if (node.nodeType !== Node.ELEMENT_NODE) return 0;
-  if (node.dataset?.rawTag !== undefined) return 0;
-  if (node.tagName === "BR") return 0;
-  let total = 0;
-  for (const child of node.childNodes) total += getVisibleTextLength(child);
-  return total;
-}
-
-// Find a visible-text offset inside a node subtree.
-function getVisibleOffsetWithinNode(node, targetNode, targetOffset) {
-  let total = 0;
-  let found = false;
-
-  const walk = (current) => {
-    if (found || !current) return;
-    if (current === targetNode) {
-      if (current.nodeType === Node.TEXT_NODE) {
-        total += Math.min(targetOffset, current.textContent.length);
-      } else if (current.nodeType === Node.ELEMENT_NODE) {
-        if (current.dataset?.rawTag !== undefined) {
-          return;
-        }
-        if (current.tagName === "BR") {
-          found = true;
-        } else {
-          for (let i = 0; i < Math.min(targetOffset, current.childNodes.length); i++) {
-            total += getVisibleTextLength(current.childNodes[i]);
-          }
-        }
-      }
-      found = true;
-      return;
-    }
-
-    if (current.nodeType === Node.TEXT_NODE) {
-      total += current.textContent.length;
-      return;
-    }
-    if (current.nodeType !== Node.ELEMENT_NODE) return;
-    if (current.dataset?.rawTag !== undefined) return;
-    if (current.tagName === "BR") {
-      return;
-    }
-
-    for (const child of current.childNodes) {
-      walk(child);
-      if (found) return;
-    }
-  };
-
-  walk(node);
-  return found ? total : null;
-}
-
-function getSelectionTextOffsets(content, range) {
-  // Translate DOM selection into visible-text offsets, ignoring hidden tag markers.
-  const offsetFromPoint = (targetNode, targetOffset) => {
-    if (targetNode === content) {
-      let total = 0;
-      let sawBlock = false;
-      for (let i = 0; i < Math.min(targetOffset, content.childNodes.length); i++) {
-        const child = content.childNodes[i];
-        const isBlock = child.nodeType === Node.ELEMENT_NODE && (child.tagName === "DIV" || child.tagName === "P");
-        if (isBlock) {
-          if (sawBlock) total += 1;
-          total += getVisibleTextLength(child);
-          sawBlock = true;
-        } else {
-          total += getVisibleTextLength(child);
-        }
-      }
-      return total;
-    }
-
-    let total = 0;
-    let sawBlock = false;
-    for (const child of content.childNodes) {
-      const isBlock = child.nodeType === Node.ELEMENT_NODE && (child.tagName === "DIV" || child.tagName === "P");
-      const local = getVisibleOffsetWithinNode(child, targetNode, targetOffset);
-      if (local != null) {
-        if (isBlock && sawBlock) total += 1;
-        return total + local;
-      }
-      if (isBlock) {
-        if (sawBlock) total += 1;
-        total += getVisibleTextLength(child);
-        sawBlock = true;
-      } else {
-        total += getVisibleTextLength(child);
-      }
-    }
-    return total;
-  };
-
-  const startOff = offsetFromPoint(range.startContainer, range.startOffset);
-  const endOff = offsetFromPoint(range.endContainer, range.endOffset);
-  return { startOff, endOff };
-}
-
-function getBoundaryTag(raw, offset, dir) {
-  // Find a tag that sits exactly on the caret boundary for Backspace/Delete.
-  const rawBefore = visibleOffsetToRaw(raw, offset, "before");
-  const rawAfter = visibleOffsetToRaw(raw, offset, "after");
-  if (rawBefore === rawAfter) return null;
-  const tags = parseRawTags(raw).filter((tag) => tag.start >= rawBefore && tag.end <= rawAfter);
-  if (!tags.length) return null;
-  return dir < 0 ? tags[tags.length - 1] : tags[0];
-}
-
-// Ignore reset-format tags in destructive delete logic.
+// Do not delete color/size reset tags by themselves.
 function isProtectedDeleteTag(tag) {
   if (!tag) return false;
   if (tag.name === "color") return tag.args.id === "Default" || tag.args.id === "-1";
@@ -439,45 +337,6 @@ const FORMAT_DEFS = {
     emitTag: (value) => (value == null ? '{{size value="100"}}' : `{{size value="${value}"}}`)
   }
 };
-
-// Collect active format runs across visible text.
-function getFormatRuns(raw, type) {
-  const def = FORMAT_DEFS[type];
-  const runs = [];
-  let curFmt = null;
-  let runStart = null;
-  let last = 0;
-  let textPos = 0;
-  for (const match of String(raw || "").matchAll(/\{\{([^}]*)\}\}/g)) {
-    const before = raw.slice(last, match.index);
-    if (before.length) {
-      if (curFmt !== null && runStart === null) runStart = textPos;
-      textPos += before.length;
-    }
-    last = match.index + match[0].length;
-    const inner = match[1].trim();
-    const name = inner.split(" ")[0];
-    if (name !== def.tagName) continue;
-    const rawValue = def.extract(inner);
-    const nextFmt = def.isReset(rawValue) ? null : rawValue;
-    if (curFmt !== nextFmt) {
-      if (curFmt !== null && runStart !== null && textPos > runStart) {
-        runs.push({ start: runStart, end: textPos, value: curFmt });
-      }
-      curFmt = nextFmt;
-      runStart = nextFmt !== null ? textPos : null;
-    }
-  }
-  const remaining = raw.slice(last);
-  if (remaining.length) {
-    if (curFmt !== null && runStart === null) runStart = textPos;
-    textPos += remaining.length;
-  }
-  if (curFmt !== null && runStart !== null && textPos > runStart) {
-    runs.push({ start: runStart, end: textPos, value: curFmt });
-  }
-  return runs;
-}
 
 // Drop empty color/size tag pairs left after edits.
 function stripEmptyFormatPairs(raw) {
@@ -555,121 +414,6 @@ function applyFormatToRange(raw, startOff, endOff, type, value) {
   }
   if (emitFmt !== null) out += def.emitTag(null);
   return out;
-}
-
-function normalizeLeadingFormatDeletion(oldRaw, nextRaw, edit, startOff, oldEndOff, newEndOff) {
-  // Prevent leading format tags from sticking to text after destructive edits.
-  if (edit && ["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(edit.inputType)) {
-    for (const type of ["color", "size"]) {
-      const run = getFormatRuns(oldRaw, type).find((item) => item.start === edit.start && item.end > edit.start);
-      if (!run) continue;
-      const removed = Math.max(0, Math.min(edit.end, run.end) - edit.start);
-      if (removed <= 0) continue;
-      const nextRunEnd = edit.start + Math.max(0, run.end - edit.end);
-      if (nextRunEnd > edit.start) nextRaw = applyFormatToRange(nextRaw, edit.start, nextRunEnd, type, null);
-    }
-    return stripEmptyFormatPairs(nextRaw);
-  }
-  if (newEndOff !== startOff) return stripEmptyFormatPairs(nextRaw);
-  for (const type of ["color", "size"]) {
-    const run = getFormatRuns(oldRaw, type).find((item) => item.start === startOff && item.end > startOff);
-    if (!run) continue;
-    const nextRunEnd = startOff + Math.max(0, run.end - oldEndOff);
-    if (nextRunEnd > startOff) nextRaw = applyFormatToRange(nextRaw, startOff, nextRunEnd, type, null);
-  }
-  return stripEmptyFormatPairs(nextRaw);
-}
-
-// Hidden raw tags live in the DOM as marker elements with no visible text width.
-function isRawTagNode(node) {
-  return node?.nodeType === Node.ELEMENT_NODE && node.dataset?.rawTag != null;
-}
-
-// Walk to the first/last concrete leaf so boundary checks can see neighboring text/tag nodes.
-function edgeLeaf(node, dir) {
-  let current = node;
-  while (current?.nodeType === Node.ELEMENT_NODE && current.childNodes.length) {
-    current = dir < 0 ? current.lastChild : current.firstChild;
-  }
-  return current;
-}
-
-// Find the nearest DOM leaf immediately before/after a selection boundary.
-function boundaryNeighbor(content, node, offset, dir) {
-  if (!node) return null;
-  if (node.nodeType === Node.TEXT_NODE) {
-    const len = node.textContent?.length || 0;
-    if ((dir < 0 && offset > 0) || (dir > 0 && offset < len)) return null;
-    const sibling = dir < 0 ? node.previousSibling : node.nextSibling;
-    if (sibling) return edgeLeaf(sibling, dir);
-    const parent = node.parentNode;
-    if (!parent) return null;
-    const index = Array.prototype.indexOf.call(parent.childNodes, node);
-    if (index < 0) return null;
-    return boundaryNeighbor(content, parent, dir < 0 ? index : index + 1, dir);
-  }
-  if (node.nodeType === Node.ELEMENT_NODE) {
-    const kids = node.childNodes;
-    if (dir < 0 && offset > 0) return edgeLeaf(kids[offset - 1], dir);
-    if (dir > 0 && offset < kids.length) return edgeLeaf(kids[offset], dir);
-    if (node === content) return null;
-    const parent = node.parentNode;
-    if (!parent) return null;
-    const index = Array.prototype.indexOf.call(parent.childNodes, node);
-    if (index < 0) return null;
-    return boundaryNeighbor(content, parent, dir < 0 ? index : index + 1, dir);
-  }
-  return null;
-}
-
-// Work out whether a collapsed caret semantically sits before or after a hidden tag boundary.
-function inferCollapsedCaretBias(content, range, fallback = "after") {
-  const beforeNode = boundaryNeighbor(content, range.startContainer, range.startOffset, -1);
-  const afterNode = boundaryNeighbor(content, range.startContainer, range.startOffset, 1);
-  if (isRawTagNode(beforeNode) && !isRawTagNode(afterNode)) return "after";
-  if (isRawTagNode(afterNode) && !isRawTagNode(beforeNode)) return "before";
-  return fallback;
-}
-
-function capturePendingInputEdit(content, inputType) {
-  // Snapshot the intended visible-text edit before contenteditable mutates the DOM.
-  const selection = getSelection();
-  if (!selection || selection.rangeCount === 0) {
-    content._pendingInputEdit = null;
-    return;
-  }
-  const range = selection.getRangeAt(0);
-  if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) {
-    content._pendingInputEdit = null;
-    return;
-  }
-  const { startOff, endOff } = getSelectionTextOffsets(content, range);
-  let start = startOff;
-  let end = endOff;
-  const raw = content.dataset.raw ?? "";
-  const plain = rawToPlainText(raw);
-  let rawStart = visibleOffsetToRaw(raw, startOff, "after");
-  let rawEnd = visibleOffsetToRaw(raw, endOff, "before");
-  let collapsedBias = null;
-  if (startOff === endOff) {
-    // Collapsed edits need the semantic side of the hidden tag boundary, not just the visible offset.
-    collapsedBias = inferCollapsedCaretBias(content, range, content._nextInputCollapsedBias || "after");
-    if (inputType === "deleteContentBackward" && startOff > 0) {
-      start = startOff - 1;
-      end = startOff;
-      rawStart = visibleOffsetToRaw(raw, start, "after");
-      rawEnd = visibleOffsetToRaw(raw, end, "before");
-    } else if (inputType === "deleteContentForward") {
-      start = startOff;
-      end = Math.min(startOff + 1, plain.length);
-      rawStart = visibleOffsetToRaw(raw, start, "after");
-      rawEnd = visibleOffsetToRaw(raw, end, "before");
-    } else {
-      rawStart = visibleOffsetToRaw(raw, startOff, collapsedBias);
-      rawEnd = rawStart;
-    }
-  }
-  content._pendingInputEdit = { inputType, start, end, rawStart, rawEnd, collapsedBias };
 }
 
 const _undoStacks = new WeakMap();
@@ -864,8 +608,8 @@ export default class DocumentApp {
         return;
       }
       content.focus();
-      const current = this.getVisibleOffsetFromPoint(content, event.clientX, event.clientY);
-      this.setSelectionVisibleOffsets(content, anchor, current);
+      const current = getVisibleOffsetFromPoint(content, event.clientX, event.clientY);
+      setSelectionVisibleOffsets(content, anchor, current);
       this.captureTagSelection(content, true);
       const bubbleRecord = this.findBubbleByContent(content);
       if (bubbleRecord?.fmtPopup) this.checkFmtSel(content, bubbleRecord.fmtPopup);
@@ -1273,7 +1017,7 @@ export default class DocumentApp {
     content.dataset.raw = nextRaw;
     content._nextInputCollapsedBias = "after";
     content.focus();
-    this.setCaretAtVisibleOffset(content, start);
+    setCaretAtVisibleOffset(content, start);
     this.tagSelection = { content, start, end: start };
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(bubbleRecord.chain);
@@ -2301,258 +2045,6 @@ export default class DocumentApp {
     this.updateBubbleOverflow(bubble, type);
   }
 
-  // Remember the raw-side intent for the next collapsed caret/input near hidden tags.
-  setCollapsedCaretBias(content, bias) {
-    if (!content) return;
-    content._nextInputCollapsedBias = bias || null;
-  }
-
-  // Re-derive that before/after intent from the current DOM selection after mouse placement.
-  syncCollapsedCaretBiasFromSelection(content, fallback = content?._nextInputCollapsedBias || "after") {
-    if (!content) return;
-    const selection = getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      this.setCollapsedCaretBias(content, null);
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    if (!range.collapsed || !content.contains(range.startContainer) || !content.contains(range.endContainer)) {
-      this.setCollapsedCaretBias(content, null);
-      return;
-    }
-    this.setCollapsedCaretBias(content, inferCollapsedCaretBias(content, range, fallback));
-  }
-
-  // Skip across contiguous tag markers when a visible offset lands on a hidden-tag boundary.
-  findTagBoundaryCaretPosition(node, dir) {
-    let current = node;
-    let parent = current?.parentNode;
-    while (parent && parent.nodeType === Node.ELEMENT_NODE) {
-      const siblings = Array.from(parent.childNodes);
-      const index = siblings.indexOf(current);
-      if (index < 0) return null;
-      let cursor = index + (dir > 0 ? 1 : -1);
-      let sawTag = false;
-      while (cursor >= 0 && cursor < siblings.length) {
-        if (!isRawTagNode(siblings[cursor])) break;
-        sawTag = true;
-        cursor += dir;
-      }
-      if (sawTag) {
-        return { node: parent, offset: dir > 0 ? cursor : cursor + 1 };
-      }
-      current = parent;
-      parent = parent.parentNode;
-    }
-    return null;
-  }
-
-  // Place the caret at the visible start or end of a bubble.
-  placeCaretAtBoundary(content, atStart) {
-    const target = content.firstElementChild || content.appendChild(document.createElement("div"));
-    const selection = getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(atStart ? target : content.lastElementChild || target);
-    range.collapse(atStart);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    this.setCollapsedCaretBias(content, atStart ? "before" : "after");
-  }
-
-  // Restore a collapsed caret from a visible-text offset.
-  setCaretAtVisibleOffset(content, offset, bias = content._nextInputCollapsedBias || "after") {
-    const blocks = Array.from(content.childNodes);
-    let remaining = Math.max(0, offset);
-    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
-      const block = blocks[blockIndex];
-      if (blockIndex > 0) {
-        remaining -= 1;
-        if (remaining <= 0) {
-          const range = document.createRange();
-          range.selectNodeContents(block);
-          range.collapse(bias !== "after");
-          const selection = getSelection();
-          selection.removeAllRanges();
-          selection.addRange(range);
-          this.setCollapsedCaretBias(content, bias);
-          return;
-        }
-      }
-      if (block.nodeType === Node.TEXT_NODE) {
-        const len = block.textContent?.length || 0;
-        if (remaining <= len) {
-          const range = document.createRange();
-          // At text edges, preserve whether the caret belongs before or after adjacent hidden tags.
-          if (remaining === len && bias === "after") {
-            const pos = this.findTagBoundaryCaretPosition(block, 1);
-            if (pos) range.setStart(pos.node, pos.offset);
-            else range.setStart(block, remaining);
-          } else if (remaining === 0 && bias === "before") {
-            const pos = this.findTagBoundaryCaretPosition(block, -1);
-            if (pos) range.setStart(pos.node, pos.offset);
-            else range.setStart(block, remaining);
-          } else {
-            range.setStart(block, remaining);
-          }
-          range.collapse(true);
-          const selection = getSelection();
-          selection.removeAllRanges();
-          selection.addRange(range);
-          this.setCollapsedCaretBias(content, bias);
-          return;
-        }
-        remaining -= len;
-        continue;
-      }
-      if (block.nodeType !== Node.ELEMENT_NODE) continue;
-      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-      let node = walker.nextNode();
-      while (node) {
-        const len = node.textContent?.length || 0;
-        if (remaining <= len) {
-          const range = document.createRange();
-          range.setStart(node, remaining);
-          range.collapse(true);
-          const selection = getSelection();
-          selection.removeAllRanges();
-          selection.addRange(range);
-          return;
-        }
-        remaining -= len;
-        node = walker.nextNode();
-      }
-      if (!remaining) {
-        const range = document.createRange();
-        range.selectNodeContents(block);
-        const hasMarkerChild = Array.from(block.childNodes).some(
-          (child) => child.nodeType === Node.ELEMENT_NODE && child.dataset?.rawTag != null
-        );
-        // Empty visual blocks can still contain hidden markers, so collapse using the saved bias.
-        range.collapse(hasMarkerChild ? bias !== "after" : true);
-        const selection = getSelection();
-        selection.removeAllRanges();
-        selection.addRange(range);
-        this.setCollapsedCaretBias(content, hasMarkerChild ? bias : "after");
-        return;
-      }
-    }
-    this.placeCaretAtBoundary(content, false);
-  }
-
-  // Map a visible-text offset back to a DOM node/offset pair.
-  locateVisibleDomPosition(content, offset) {
-    const blocks = Array.from(content.childNodes);
-    let remaining = Math.max(0, offset);
-    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
-      const block = blocks[blockIndex];
-      if (blockIndex > 0) {
-        remaining -= 1;
-        if (remaining <= 0) return { node: block, offset: 0 };
-      }
-      if (block.nodeType === Node.TEXT_NODE) {
-        const len = block.textContent?.length || 0;
-        if (remaining <= len) return { node: block, offset: remaining };
-        remaining -= len;
-        continue;
-      }
-      if (block.nodeType !== Node.ELEMENT_NODE) continue;
-      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-      let node = walker.nextNode();
-      while (node) {
-        const len = node.textContent?.length || 0;
-        if (remaining <= len) return { node, offset: remaining };
-        remaining -= len;
-        node = walker.nextNode();
-      }
-      if (!remaining) {
-        const hasMarkerChild = Array.from(block.childNodes).some(
-          (child) => child.nodeType === Node.ELEMENT_NODE && child.dataset?.rawTag != null
-        );
-        return { node: block, offset: hasMarkerChild ? block.childNodes.length : 0 };
-      }
-    }
-    return { node: content, offset: content.childNodes.length };
-  }
-
-  // Restore a range selection from visible-text offsets.
-  setSelectionVisibleOffsets(content, start, end) {
-    const from = Math.min(start, end);
-    const to = Math.max(start, end);
-    if (from === to) {
-      this.setCaretAtVisibleOffset(content, from);
-      return;
-    }
-    const startPos = this.locateVisibleDomPosition(content, from);
-    const endPos = this.locateVisibleDomPosition(content, to);
-    if (!startPos?.node || !endPos?.node) return;
-    const range = document.createRange();
-    range.setStart(startPos.node, startPos.offset);
-    range.setEnd(endPos.node, endPos.offset);
-    const selection = getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    this.setCollapsedCaretBias(content, null);
-  }
-
-  // Place the caret from mouse coordinates, with fallbacks.
-  placeCaretFromPoint(content, clientX, clientY) {
-    const selection = getSelection();
-    let placed = false;
-
-    if (document.caretPositionFromPoint) {
-      const pos = document.caretPositionFromPoint(clientX, clientY);
-      if (pos && content.contains(pos.offsetNode)) {
-        const range = document.createRange();
-        range.setStart(pos.offsetNode, pos.offset);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
-        this.syncCollapsedCaretBiasFromSelection(content);
-        placed = true;
-      }
-    } else if (document.caretRangeFromPoint) {
-      const range = document.caretRangeFromPoint(clientX, clientY);
-      if (range && content.contains(range.startContainer)) {
-        selection.removeAllRanges();
-        selection.addRange(range);
-        this.syncCollapsedCaretBiasFromSelection(content);
-        placed = true;
-      }
-    }
-
-    if (placed) return;
-
-    const blocks = [...content.children];
-    if (!blocks.length) {
-      this.placeCaretAtBoundary(content, true);
-      return;
-    }
-
-    const firstRect = blocks[0].getBoundingClientRect();
-    const lastRect = blocks[blocks.length - 1].getBoundingClientRect();
-    if (clientX <= firstRect.left || clientY <= firstRect.top) {
-      this.placeCaretAtBoundary(content, true);
-      return;
-    }
-    if (clientX >= lastRect.right || clientY >= lastRect.bottom) {
-      this.placeCaretAtBoundary(content, false);
-      return;
-    }
-
-    const contentRect = content.getBoundingClientRect();
-    this.placeCaretAtBoundary(content, clientX <= contentRect.left + contentRect.width / 2);
-  }
-
-  // Convert a mouse point to a visible-text offset.
-  getVisibleOffsetFromPoint(content, clientX, clientY) {
-    this.placeCaretFromPoint(content, clientX, clientY);
-    const selection = getSelection();
-    if (!selection || selection.rangeCount === 0) return 0;
-    const range = selection.getRangeAt(0);
-    if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) return 0;
-    return getSelectionTextOffsets(content, range).startOff;
-  }
-
   // Re-render one bubble from a raw undo/redo snapshot.
   restoreUndoState(content, state) {
     const raw = typeof state === "string" ? state : state.raw;
@@ -2560,7 +2052,7 @@ export default class DocumentApp {
     content.dataset.raw = raw;
     content.focus();
     if (typeof state !== "string") {
-      this.setCaretAtVisibleOffset(content, Math.min(state.caret, rawToPlainText(raw).length), state.bias || "after");
+      setCaretAtVisibleOffset(content, Math.min(state.caret, rawToPlainText(raw).length), state.bias || "after");
     }
     const bubbleRecord = this.findBubbleByContent(content);
     if (!bubbleRecord) return;
@@ -2650,7 +2142,7 @@ export default class DocumentApp {
         // Clicking a marker or empty bubble surface should still focus the real text layer.
         event.preventDefault();
         content.focus();
-        const anchor = this.getVisibleOffsetFromPoint(content, event.clientX, event.clientY);
+        const anchor = getVisibleOffsetFromPoint(content, event.clientX, event.clientY);
         this.surfaceDragSelection = { content, anchor };
         if (!content.firstElementChild?.textContent && !content.textContent) {
           const target = content.firstElementChild || content.appendChild(document.createElement("div"));
@@ -2712,22 +2204,7 @@ export default class DocumentApp {
       }
       if (event.inputType !== "deleteContentBackward" && event.inputType !== "deleteContentForward") return;
       if (startOff !== endOff) return;
-      const tag = getBoundaryTag(raw, startOff, event.inputType === "deleteContentBackward" ? -1 : 1);
-      if (!tag) return;
-      if (isProtectedDeleteTag(tag)) return;
-      // Marker deletes are handled in raw so browser DOM deletion cannot desync the tag layer.
-      event.preventDefault();
-      content._pendingInputEdit = null;
-      saveUndo(content);
-      const nextRaw = removeTagAndPairedReset(raw, tag);
-      renderRawToContent(content, nextRaw);
-      content.dataset.raw = nextRaw;
-      content.focus();
-      this.setCaretAtVisibleOffset(content, Math.min(startOff, rawToPlainText(nextRaw).length));
-      this.syncMetaBar(bubbleRecord);
-      this.refreshChoicePills(chain);
-      this.updateBubbleOverflow(bubbleRecord, chain.typeSelect.value);
-      this.checkFmtSel(content, fmtPopup);
+      this.handleBoundaryTagDelete(event, bubbleRecord, startOff);
     });
     content.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey) && event.code === "KeyZ" && !event.shiftKey) {
@@ -2786,6 +2263,27 @@ export default class DocumentApp {
     return bubbleRecord;
   }
 
+  // Delete the tag on the Backspace/Delete side of a collapsed caret.
+  handleBoundaryTagDelete(event, bubbleRecord, startOff) {
+    const { content, chain, fmtPopup } = bubbleRecord;
+    const raw = content.dataset.raw ?? "";
+    const tag = getBoundaryTagForInput(raw, startOff, event.inputType);
+    if (!tag || isProtectedDeleteTag(tag)) return;
+    // Marker deletes are handled in raw so browser DOM deletion cannot desync the tag layer.
+    event.preventDefault();
+    content._pendingInputEdit = null;
+    saveUndo(content);
+    const nextRaw = removeTagAndPairedReset(raw, tag);
+    renderRawToContent(content, nextRaw);
+    content.dataset.raw = nextRaw;
+    content.focus();
+    setCaretAtVisibleOffset(content, Math.min(startOff, rawToPlainText(nextRaw).length));
+    this.syncMetaBar(bubbleRecord);
+    this.refreshChoicePills(chain);
+    this.updateBubbleOverflow(bubbleRecord, chain.typeSelect.value);
+    this.checkFmtSel(content, fmtPopup);
+  }
+
   // Delete one bubble card from a chain.
   deleteBubble(bubbleRecord) {
     const { chain, card } = bubbleRecord;
@@ -2810,7 +2308,7 @@ export default class DocumentApp {
     const bubbleRecord = this.findBubbleByContent(content);
     if (!bubbleRecord) return;
     if (event.type === "drop") {
-      this.placeCaretFromPoint(content, event.clientX, event.clientY);
+      placeCaretFromPoint(content, event.clientX, event.clientY);
     }
     capturePendingInputEdit(content, "insertFromPaste");
     const pendingEdit = content._pendingInputEdit || null;
@@ -2831,7 +2329,7 @@ export default class DocumentApp {
     renderRawToContent(content, nextRaw);
     content.dataset.raw = nextRaw;
     content.focus();
-    this.setCaretAtVisibleOffset(content, Math.min(caretOffset, rawToPlainText(nextRaw).length));
+    setCaretAtVisibleOffset(content, Math.min(caretOffset, rawToPlainText(nextRaw).length));
     this.captureTagSelection(content, true);
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(chain);
@@ -2861,7 +2359,7 @@ export default class DocumentApp {
       renderRawToContent(content, nextRaw);
       content.dataset.raw = nextRaw;
       content.focus();
-      this.setCaretAtVisibleOffset(content, startOff);
+      setCaretAtVisibleOffset(content, startOff);
       this.syncMetaBar(bubbleRecord);
       this.refreshChoicePills(bubbleRecord.chain);
       this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
@@ -2874,12 +2372,43 @@ export default class DocumentApp {
     renderRawToContent(content, nextRaw);
     content.dataset.raw = nextRaw;
     content.focus();
-    this.setCaretAtVisibleOffset(content, endOff);
+    setCaretAtVisibleOffset(content, endOff);
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(bubbleRecord.chain);
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
     this.updatePageSepLabels(bubbleRecord.chain);
     bubbleRecord.fmtPopup?.classList.remove("show");
+  }
+
+  // Build raw from the visible-text edit delta without changing the bubble UI yet.
+  buildRawFromVisibleEdit(previousRaw, previousPlain, nextPlain, pendingEdit) {
+    let prefix = 0;
+    let oldSuffix = previousPlain.length;
+    let newSuffix = nextPlain.length;
+    let nextRaw = previousRaw;
+
+    if (pendingEdit && ["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(pendingEdit.inputType)) {
+      prefix = pendingEdit.start;
+      oldSuffix = pendingEdit.end;
+      newSuffix = pendingEdit.start;
+      nextRaw = spliceVisibleRange(previousRaw, pendingEdit.start, pendingEdit.end, "");
+    } else if (pendingEdit && ["insertText", "insertLineBreak", "insertParagraph", "insertFromPaste"].includes(pendingEdit.inputType)) {
+      prefix = pendingEdit.start;
+      oldSuffix = pendingEdit.end;
+      // The browser mutates visible text first; derive the inserted plain-text slice from that delta.
+      const insertedLen = Math.max(0, nextPlain.length - (previousPlain.length - (pendingEdit.end - pendingEdit.start)));
+      const insertedText = nextPlain.slice(pendingEdit.start, pendingEdit.start + insertedLen);
+      newSuffix = pendingEdit.start + insertedText.length;
+      nextRaw = spliceVisibleRange(previousRaw, pendingEdit.start, pendingEdit.end, insertedText, "after");
+    } else {
+      while (prefix < previousPlain.length && prefix < nextPlain.length && previousPlain[prefix] === nextPlain[prefix]) prefix++;
+      while (oldSuffix > prefix && newSuffix > prefix && previousPlain[oldSuffix - 1] === nextPlain[newSuffix - 1]) {
+        oldSuffix--;
+        newSuffix--;
+      }
+      nextRaw = spliceVisibleRange(previousRaw, prefix, oldSuffix, nextPlain.slice(prefix, newSuffix));
+    }
+    return { nextRaw, prefix, oldSuffix, newSuffix };
   }
 
   syncBubbleState(bubbleRecord) {
@@ -2910,32 +2439,11 @@ export default class DocumentApp {
     let nextRaw = previousRaw;
 
     if (previousPlain !== nextPlain) {
-      let prefix = 0;
-      let oldSuffix = previousPlain.length;
-      let newSuffix = nextPlain.length;
-
-      if (pendingEdit && ["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(pendingEdit.inputType)) {
-        prefix = pendingEdit.start;
-        oldSuffix = pendingEdit.end;
-        newSuffix = pendingEdit.start;
-        nextRaw = spliceVisibleRange(previousRaw, pendingEdit.start, pendingEdit.end, "");
-      } else if (pendingEdit && ["insertText", "insertLineBreak", "insertParagraph", "insertFromPaste"].includes(pendingEdit.inputType)) {
-        prefix = pendingEdit.start;
-        oldSuffix = pendingEdit.end;
-        // The browser mutates visible text first; derive the inserted plain-text slice from that delta.
-        const insertedLen = Math.max(0, nextPlain.length - (previousPlain.length - (pendingEdit.end - pendingEdit.start)));
-        const insertedText = nextPlain.slice(pendingEdit.start, pendingEdit.start + insertedLen);
-        newSuffix = pendingEdit.start + insertedText.length;
-        nextRaw = spliceVisibleRange(previousRaw, pendingEdit.start, pendingEdit.end, insertedText, "after");
-      } else {
-        while (prefix < previousPlain.length && prefix < nextPlain.length && previousPlain[prefix] === nextPlain[prefix]) prefix++;
-        while (oldSuffix > prefix && newSuffix > prefix && previousPlain[oldSuffix - 1] === nextPlain[newSuffix - 1]) {
-          oldSuffix--;
-          newSuffix--;
-        }
-        nextRaw = spliceVisibleRange(previousRaw, prefix, oldSuffix, nextPlain.slice(prefix, newSuffix));
-      }
-      nextRaw = normalizeLeadingFormatDeletion(previousRaw, nextRaw, pendingEdit, prefix, oldSuffix, newSuffix);
+      const rawEdit = this.buildRawFromVisibleEdit(previousRaw, previousPlain, nextPlain, pendingEdit);
+      let { prefix, oldSuffix, newSuffix } = rawEdit;
+      nextRaw = rawEdit.nextRaw;
+      nextRaw = normalizeLeadingFormatDeletion(previousRaw, nextRaw, pendingEdit, prefix, oldSuffix, newSuffix, FORMAT_DEFS, applyFormatToRange);
+      nextRaw = stripEmptyFormatPairs(nextRaw);
       bubbleRecord.content.dataset.raw = nextRaw;
     } else {
       nextRaw = previousRaw || serializeContent(bubbleRecord.content);
@@ -2951,9 +2459,9 @@ export default class DocumentApp {
       content.focus();
       if (start === end) {
         // Reapply the same visible offset together with the hidden-tag side captured before rerender.
-        this.setCaretAtVisibleOffset(content, start, pendingEdit?.collapsedBias || content._nextInputCollapsedBias || "after");
+        setCaretAtVisibleOffset(content, start, pendingEdit?.collapsedBias || content._nextInputCollapsedBias || "after");
       } else {
-        this.setSelectionVisibleOffsets(content, start, end);
+        setSelectionVisibleOffsets(content, start, end);
       }
     }
     this.syncMetaBar(bubbleRecord);
@@ -3286,7 +2794,7 @@ export default class DocumentApp {
     renderRawToContent(target, nextRaw);
     target.dataset.raw = nextRaw;
     target.focus();
-    this.setCaretAtVisibleOffset(target, start);
+    setCaretAtVisibleOffset(target, start);
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(bubbleRecord.chain);
     this.updateBubbleOverflow(bubbleRecord, bubbleRecord.chain.typeSelect.value);
