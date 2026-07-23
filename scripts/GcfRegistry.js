@@ -83,16 +83,6 @@ export function resolveEditorColorName(game, idOrName) {
   return null;
 }
 
-export function resolveColorCssValue(game, colorName) {
-  if (!colorName) return null;
-  const current = getColorCss(game)[colorName];
-  if (current) return current;
-  for (const palette of Object.values(COLOR_CSS)) {
-    if (palette[colorName]) return palette[colorName];
-  }
-  return null;
-}
-
 export function parseGcfTags(text) {
   const lines = String(text || "").split(/\r?\n/);
   const tags = [];

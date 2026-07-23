@@ -167,12 +167,6 @@ function makeStatus(text) {
   return text || "Ready";
 }
 
-// Show MSYT meta as readable JSON text.
-function stringifyMsytMeta(meta) {
-  if (!meta || typeof meta !== "object") return "";
-  return `${JSON.stringify(meta, null, 2)}\n`;
-}
-
 // Map AEON labelGroups to msyt group_count.
 function getAeonLabelGroups(yamlMeta) {
   const match = String(yamlMeta || "").match(/(?:^|\n)labelGroups:\s*(-?\d+)\s*(?:\n|$)/);
@@ -258,13 +252,6 @@ function hasATR1(currentGame, yamlMeta) {
 function getAeonAttributeKey(chains, currentDocMode) {
   const list = Array.isArray(chains) ? chains : [];
   return list.some((chain) => String(chain?.attrVal || "").trim() !== "") ? "attributeText" : "attribute";
-}
-
-// Measure range text after removing hidden raw-tag nodes.
-function getTextLengthExcludingTagNodes(range) {
-  const fragment = range.cloneContents();
-  fragment.querySelectorAll?.("[data-raw-tag]").forEach((node) => node.remove());
-  return fragment.textContent.length;
 }
 
 // Count visible text length for a node tree.
@@ -1922,13 +1909,6 @@ export default class DocumentApp {
     });
   }
 
-  // Refresh all overflow warnings after the document has been mounted.
-  refreshBubbleOverflows() {
-    this.chains.forEach((chain) => {
-      chain.bubbles.forEach((bubble) => this.updateBubbleOverflow(bubble, chain.typeSelect.value));
-    });
-  }
-
   // Refresh rendered widths after import once the dialogue font is ready for scrollWidth.
   refreshBubbleOverflowsAfterFonts(renderId) {
     document.fonts?.ready?.then(() => {
@@ -1989,15 +1969,6 @@ export default class DocumentApp {
       chain.compareButton.hidden = !chain.compareIssue;
       chain.compareButton.title = chain.compareIssue ? `Show diff: ${chain.compareIssue.label}` : "Show diff";
     }
-  }
-
-  // Refresh per-chain UI that depends on the current mode.
-  updateChainModeUi(chain) {
-    chain.attrInput.placeholder =
-      this.exportMode === DOC_MODE_AEON
-        ? getAeonAttributeKey(this.chains, this.currentDocMode)
-        : chain.attrKey || "attributes";
-    this.updateSidebarItem(chain);
   }
 
   // Refresh mode-dependent UI for all chains in one pass.

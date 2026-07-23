@@ -272,18 +272,6 @@ export function renderRawToContent(contentEl, raw) {
   applyMarkerOffsets(contentEl);
 }
 
-export function repaintRenderedColors(contentEl) {
-  if (!contentEl) return;
-  contentEl.querySelectorAll("[data-raw-color-id]").forEach((node) => {
-    const colorName = normalizeColorId(node.dataset.rawColorId);
-    if (!colorName) {
-      delete node.dataset.color;
-      return;
-    }
-    node.dataset.color = colorName;
-  });
-}
-
 function collectSerializedPieces(node, pieces, inheritedState = { colorId: null, sizeValue: null }) {
   if (node.nodeType === Node.TEXT_NODE) {
     pieces.push({
@@ -389,20 +377,4 @@ export function tagSummary(rawTag) {
   if (name === "setVoice") return `voice:${args.asset || "?"}`;
   if (PAUSE_TAGS.has(name)) return name;
   return name;
-}
-
-export function insertRawTagAtSelection(contentEl, rawTag) {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return false;
-  const range = selection.getRangeAt(0);
-  if (!contentEl.contains(range.startContainer)) return false;
-  const token = createTagNode(rawTag);
-  range.deleteContents();
-  range.insertNode(token);
-  range.setStartAfter(token);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
-  ensureEditableStructure(contentEl);
-  return true;
 }
