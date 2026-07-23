@@ -976,6 +976,15 @@ body[data-game="TotK"] .bubble-content [data-color="DullGold"] { color: #ccaa44;
   font-weight: 700;
 }
 
+.fmt-selection-count {
+  min-width: 22px;
+  padding: 0 4px;
+  color: #f0ece4;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 /* Add page - delete page */
 .bub-btns {
   display: flex;

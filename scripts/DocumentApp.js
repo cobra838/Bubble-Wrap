@@ -1055,6 +1055,12 @@ export default class DocumentApp {
     };
     popup.appendChild(reset);
 
+    const selectionCount = document.createElement("span");
+    selectionCount.className = "fmt-selection-count";
+    selectionCount.title = "Selected characters";
+    selectionCount.textContent = "0";
+    popup.appendChild(selectionCount);
+
     const sep = document.createElement("div");
     sep.className = "fmt-sep";
     popup.appendChild(sep);
@@ -1239,6 +1245,10 @@ export default class DocumentApp {
       content.contains(selection.anchorNode) &&
       content.contains(selection.focusNode)
     ) {
+      const { startOff, endOff } = getSelectionTextOffsets(content, selection.getRangeAt(0));
+      const raw = content.dataset.raw ?? serializeContent(content);
+      const selectedText = rawToPlainText(raw).slice(startOff, endOff);
+      popup.querySelector(".fmt-selection-count").textContent = String(selectedText.replaceAll("\n", "").length);
       popup.classList.add("show");
     } else {
       popup.classList.remove("show");
