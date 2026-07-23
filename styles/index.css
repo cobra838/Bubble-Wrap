@@ -985,6 +985,11 @@ body[data-game="TotK"] .bubble-content [data-color="DullGold"] { color: #ccaa44;
   text-align: center;
 }
 
+.fmt-copy-content {
+  font-size: 9px;
+  color: #f0ece4;
+}
+
 /* Add page - delete page */
 .bub-btns {
   display: flex;

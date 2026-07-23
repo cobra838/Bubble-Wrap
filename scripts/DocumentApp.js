@@ -1082,6 +1082,66 @@ export default class DocumentApp {
       };
       popup.appendChild(button);
     }
+
+    const copySeparator = document.createElement("div");
+    copySeparator.className = "fmt-sep";
+    popup.appendChild(copySeparator);
+
+    const copy = document.createElement("button");
+    copy.className = "fmt-btn fmt-copy-content";
+    copy.type = "button";
+    copy.textContent = "⧉ TXT";
+    copy.title = "Copy selected text";
+    copy.onmousedown = (event) => {
+      event.preventDefault();
+      this.copyFmtSelection();
+    };
+    popup.appendChild(copy);
+
+    const copyContent = document.createElement("button");
+    copyContent.className = "fmt-btn fmt-copy-content";
+    copyContent.type = "button";
+    copyContent.textContent = "⧉ RAW";
+    copyContent.title = "Copy selected content with tags";
+    copyContent.onmousedown = (event) => {
+      event.preventDefault();
+      this.copyFmtSelectionContent();
+    };
+    popup.appendChild(copyContent);
+  }
+
+  // Copy the visible text selected in the active bubble without losing that selection.
+  copyFmtSelection() {
+    const selection = getSelection();
+    const content = this.activeContent;
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed || !content) return;
+    const range = selection.getRangeAt(0);
+    if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) return;
+    const text = selection.toString();
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(
+      () => this.setStatus("Copied selected text"),
+      () => this.setStatus("Could not copy selected text")
+    );
+  }
+
+  // Copy the selected raw range, including tags inside that range.
+  copyFmtSelectionContent() {
+    const selection = getSelection();
+    const content = this.activeContent;
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed || !content) return;
+    const range = selection.getRangeAt(0);
+    if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) return;
+    const { startOff, endOff } = getSelectionTextOffsets(content, range);
+    const raw = content.dataset.raw ?? serializeContent(content);
+    const rawStart = visibleOffsetToRaw(raw, startOff, "after");
+    const rawEnd = visibleOffsetToRaw(raw, endOff, "before");
+    const selectedContent = raw.slice(rawStart, rawEnd);
+    if (!selectedContent) return;
+    navigator.clipboard.writeText(selectedContent).then(
+      () => this.setStatus("Copied selected content"),
+      () => this.setStatus("Could not copy selected content")
+    );
   }
 
   // Save the current bubble selection for later tag insertion.
