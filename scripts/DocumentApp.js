@@ -270,7 +270,7 @@ function hasATR1(currentGame, yamlMeta) {
 // AEON/MSYT attribute mode depends on whether any entry has non-empty attribute text.
 function getAeonAttributeKey(chains, currentDocMode) {
   const list = Array.isArray(chains) ? chains : [];
-  return list.some((chain) => String(chain?.attrVal || "").trim() !== "") ? "attributeText" : "attribute";
+  return list.some((chain) => String(chain?.attrInput?.value ?? chain?.attrVal ?? "").trim() !== "") ? "attributeText" : "attribute";
 }
 
 // Do not delete color/size reset tags by themselves.
@@ -1751,7 +1751,7 @@ export default class DocumentApp {
         ? getAeonMetaBoolean(this.msytDocInfo.aeonMeta, "hasATR1", msytHasATR1(this.chains))
         : hasATR1(this.currentGame, this.yamlMeta);
     this.chains.forEach((chain) => {
-      chain.attrInput.placeholder = this.exportMode === DOC_MODE_AEON ? aeonAttributeKey : chain.attrKey || "attributes";
+      chain.attrInput.placeholder = this.exportMode === DOC_MODE_AEON ? aeonAttributeKey : "attributes";
       chain.attrInput.style.display = showAttribute ? "" : "none";
       this.updateSidebarItem(chain);
     });
@@ -2025,6 +2025,7 @@ export default class DocumentApp {
       chain.msytHasAttributes = chain.msytHasAttributes || attrInput.value !== "";
       this.updateSidebarItem(chain);
       this.doSearch(this.searchInput.value);
+      if (this.exportMode === DOC_MODE_AEON) this.refreshChainModeUi();
     });
     typeSelect.addEventListener("change", () => this.applyChainType(chain, typeSelect.value));
     compareButton.addEventListener("click", () => this.openCompareIssue(chain));
