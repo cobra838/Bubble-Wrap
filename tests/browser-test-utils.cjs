@@ -552,4 +552,15 @@ async function runExportTest({ testName, sourceDescription, accepts, targetMode,
   if (report.differences.length || report.failures.length) process.exitCode = 2;
 }
 
-module.exports = { runExportTest };
+module.exports = {
+  runExportTest,
+  launchBrowser,
+  closeBrowser,
+  waitForPage,
+  importText,
+  exportText,
+  configureGame,
+  configureAutoSplit,
+  configureImportSettings,
+  configureBulkActions
+};

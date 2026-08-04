@@ -18,13 +18,21 @@ import ImportSettings from "./ImportSettings.js";
 import BulkActions from "./BulkActions.js";
 import DocumentSearch from "./DocumentSearch.js";
 import {
+  setTagCaretPosition,
   getBoundaryTagForInput,
+  getMarkerDeleteAction,
+  getMarkerDeleteRestoreAnchor,
+  insertPendingText,
   normalizeLeadingFormatDeletion,
   inferCollapsedCaretBias,
   capturePendingInputEdit,
   getSelectionTextOffsets,
   setCaretAtVisibleOffset,
+  setCaretAtTagCaretAnchor,
+  getTagCaretAnchor,
   setSelectionVisibleOffsets,
+  moveTagCaretAcrossMarker,
+  normalizeTagCaretSelection,
   placeCaretFromPoint,
   getVisibleOffsetFromPoint
 } from "./Caret.js";
@@ -435,7 +443,7 @@ function getRedoStack(content) {
 function makeUndoState(content, raw = content.dataset.raw ?? serializeContent(content)) {
   const selection = getSelection();
   let caret = rawToPlainText(raw).length;
-  let bias = content._nextInputCollapsedBias || "after";
+  let bias = content._tagCaretSide || "after";
   if (selection && selection.rangeCount > 0) {
     const range = selection.getRangeAt(0);
     if (content.contains(range.startContainer) && content.contains(range.endContainer)) {
@@ -444,7 +452,7 @@ function makeUndoState(content, raw = content.dataset.raw ?? serializeContent(co
       bias = inferCollapsedCaretBias(content, range, bias);
     }
   }
-  return { raw, caret, bias };
+  return { raw, caret, bias, tagCaretAnchor: getTagCaretAnchor(content) };
 }
 
 function saveUndo(content) {
@@ -485,6 +493,8 @@ export default class DocumentApp {
     this.compareLayout = "unified";
     this.activeCompareIssues = null;
     this.autoSplit = localStorage.getItem("msbt_autosplit") !== "0";
+    const savedTagCaretPosition = localStorage.getItem("bubble_wrap_tag_caret_position");
+    this.tagCaretPosition = savedTagCaretPosition == null ? true : savedTagCaretPosition === "true";
 
     this.sidebar = document.getElementById("sidebar");
     this.editorArea = document.getElementById("editor-area");
@@ -529,11 +539,15 @@ export default class DocumentApp {
     this.btnAutosplit = document.getElementById("btn-autosplit");
     this.globalTypeSelect = document.getElementById("global-type-select");
     this.emptyAddBtn = document.getElementById("empty-add-btn");
+    this.tagCaretPositionSelect = document.getElementById("setting-tag-caret-position");
+    this.tagCaretPositionSelect.addEventListener("change", () => this.saveTagCaretPosition());
     this.importSettings = new ImportSettings();
     this.bulkActions = new BulkActions(this, parseInlineTag, buildInlineTag);
     this.documentSearch = new DocumentSearch(this);
 
     setRawContentGame(this.currentGame);
+    this.syncTagCaretPositionUi();
+    setTagCaretPosition(this.tagCaretPosition);
     this.bindEvents();
     this.exposeGlobals();
     this.restoreGame();
@@ -652,7 +666,10 @@ export default class DocumentApp {
     window.filterTP = (query) => this.filterTP(query);
     window.tpKey = (event) => this.tpKey(event);
     window.toggleAutoSplit = () => this.toggleAutoSplit();
-    window.openSettings = () => this.importSettings.open();
+    window.openSettings = () => {
+      this.importSettings.open();
+      this.syncTagCaretPositionUi();
+    };
     window.closeSettings = () => this.importSettings.close();
     window.setImportSettings = (settings) => this.importSettings.set(settings);
     window.openBulkActions = () => this.bulkActions.open();
@@ -1015,7 +1032,7 @@ export default class DocumentApp {
     const nextRaw = spliceVisibleRange(currentRaw, start, end, rawTag);
     renderRawToContent(content, nextRaw);
     content.dataset.raw = nextRaw;
-    content._nextInputCollapsedBias = "after";
+    content._tagCaretSide = "after";
     content.focus();
     setCaretAtVisibleOffset(content, start);
     this.tagSelection = { content, start, end: start };
@@ -1053,6 +1070,17 @@ export default class DocumentApp {
     this.editorArea.classList.toggle("has-entries", hasEntries);
     if (hasEntries) this.appendAddChainButton();
     else this.editorArea.querySelector("#add-chain-btn")?.remove();
+  }
+
+  // Keep the editor-only tag caret setting with the Settings dialog.
+  syncTagCaretPositionUi() {
+    this.tagCaretPositionSelect.value = String(this.tagCaretPosition);
+  }
+
+  saveTagCaretPosition() {
+    this.tagCaretPosition = this.tagCaretPositionSelect.value === "true";
+    localStorage.setItem("bubble_wrap_tag_caret_position", String(this.tagCaretPosition));
+    setTagCaretPosition(this.tagCaretPosition);
   }
 
   // Turn autosplit on or off.
@@ -2052,7 +2080,9 @@ export default class DocumentApp {
     content.dataset.raw = raw;
     content.focus();
     if (typeof state !== "string") {
-      setCaretAtVisibleOffset(content, Math.min(state.caret, rawToPlainText(raw).length), state.bias || "after");
+      if (!setCaretAtTagCaretAnchor(content, state.tagCaretAnchor)) {
+        setCaretAtVisibleOffset(content, Math.min(state.caret, rawToPlainText(raw).length), state.bias || "after");
+      }
     }
     const bubbleRecord = this.findBubbleByContent(content);
     if (!bubbleRecord) return;
@@ -2136,6 +2166,7 @@ export default class DocumentApp {
     bubble.addEventListener("mousedown", (event) => {
       if (event.button !== 0) return;
       if (event.target.closest(".bub-btn")) return;
+      if (event.defaultPrevented) return;
       const marker = event.target.closest(".tag-node, .pause-node");
       const isDirectSurface = event.target === bubble || event.target === content;
       if (marker || isDirectSurface) {
@@ -2144,27 +2175,20 @@ export default class DocumentApp {
         content.focus();
         const anchor = getVisibleOffsetFromPoint(content, event.clientX, event.clientY);
         this.surfaceDragSelection = { content, anchor };
-        if (!content.firstElementChild?.textContent && !content.textContent) {
-          const target = content.firstElementChild || content.appendChild(document.createElement("div"));
-          const selection = getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(target);
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
+        if (!content.firstElementChild?.textContent && !content.textContent) setCaretAtVisibleOffset(content, 0, "after");
       }
     });
 
     content.addEventListener("focus", () => {
       this.activeContent = content;
+      normalizeTagCaretSelection(content);
       this.captureTagSelection(content, true);
       this.checkFmtSel(content, fmtPopup);
     });
     content.addEventListener("beforeinput", (event) => {
       // Handle newline and marker-edge deletes in raw first; native contenteditable gets these wrong.
       content._pendingInputEdit = null;
-      capturePendingInputEdit(content, event.inputType);
+      capturePendingInputEdit(content, event.inputType, event.getTargetRanges?.()[0] || null);
       const selection = getSelection();
       if (!selection || selection.rangeCount === 0) return;
       const range = selection.getRangeAt(0);
@@ -2176,9 +2200,10 @@ export default class DocumentApp {
       if (event.inputType === "insertParagraph" || event.inputType === "insertLineBreak") {
         event.preventDefault();
         saveUndo(content);
+        const pendingEdit = content._pendingInputEdit;
         content._pendingInputEdit = null;
-        const nextRaw = spliceVisibleRange(raw, startOff, endOff, "\n", "after");
-        this.applyContentRawEdit(bubbleRecord, nextRaw, startOff + 1);
+        const insert = insertPendingText(raw, pendingEdit, "\n");
+        this.applyContentRawEdit(bubbleRecord, insert.nextRaw, startOff + 1, insert.tagCaretAnchor);
         return;
       }
 
@@ -2196,17 +2221,31 @@ export default class DocumentApp {
       }
 
       if (
-        ["insertText", "insertLineBreak", "insertParagraph", "deleteContentBackward", "deleteContentForward", "deleteByCut", "insertFromPaste"].includes(
+        ["insertText", "insertLineBreak", "insertParagraph", "deleteContentBackward", "deleteContentForward", "deleteWordBackward", "deleteWordForward", "deleteByCut", "insertFromPaste"].includes(
           event.inputType
         )
       ) {
         saveUndo(content);
       }
-      if (event.inputType !== "deleteContentBackward" && event.inputType !== "deleteContentForward") return;
+      if (!["deleteContentBackward", "deleteContentForward", "deleteWordBackward", "deleteWordForward"].includes(event.inputType)) return;
       if (startOff !== endOff) return;
-      this.handleBoundaryTagDelete(event, bubbleRecord, startOff);
+      this.handleBoundaryTagDelete(event, bubbleRecord);
     });
     content.addEventListener("keydown", (event) => {
+      const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && direction) {
+        event.preventDefault();
+        moveTagCaretAcrossMarker(content, direction, true);
+        this.captureTagSelection(content, true);
+        return;
+      }
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        if (direction && moveTagCaretAcrossMarker(content, direction)) {
+          event.preventDefault();
+          this.captureTagSelection(content, true);
+          return;
+        }
+      }
       if ((event.ctrlKey || event.metaKey) && event.code === "KeyZ" && !event.shiftKey) {
         event.preventDefault();
         this.doUndo(content);
@@ -2235,10 +2274,12 @@ export default class DocumentApp {
         getSelection().getRangeAt(0).selectNodeContents(newDiv);
         getSelection().collapseToEnd();
       }
+      normalizeTagCaretSelection(content);
       this.captureTagSelection(content, true);
       this.checkFmtSel(content, fmtPopup);
     });
     content.addEventListener("mouseup", () => {
+      normalizeTagCaretSelection(content);
       this.captureTagSelection(content, true);
       this.checkFmtSel(content, fmtPopup);
     });
@@ -2264,20 +2305,38 @@ export default class DocumentApp {
   }
 
   // Delete the tag on the Backspace/Delete side of a collapsed caret.
-  handleBoundaryTagDelete(event, bubbleRecord, startOff) {
+  handleBoundaryTagDelete(event, bubbleRecord) {
     const { content, chain, fmtPopup } = bubbleRecord;
     const raw = content.dataset.raw ?? "";
-    const tag = getBoundaryTagForInput(raw, startOff, event.inputType);
-    if (!tag || isProtectedDeleteTag(tag)) return;
-    // Marker deletes are handled in raw so browser DOM deletion cannot desync the tag layer.
+    const edit = content._pendingInputEdit;
+    const formatTag = getBoundaryTagForInput(raw, edit?.caretOffset ?? 0, event.inputType);
+    if (isFormatStartTag(formatTag)) {
+      event.preventDefault();
+      content._pendingInputEdit = null;
+      saveUndo(content);
+      this.applyContentRawEdit(bubbleRecord, removeTagAndPairedReset(raw, formatTag), edit.caretOffset);
+      return;
+    }
+    const action = getMarkerDeleteAction(raw, edit);
+    if (!action) return;
+    if (action.kind === "marker" && isProtectedDeleteTag(action.tag)) return;
+    // Hidden markers are handled in raw so contenteditable cannot create an extra caret stop.
     event.preventDefault();
     content._pendingInputEdit = null;
     saveUndo(content);
-    const nextRaw = removeTagAndPairedReset(raw, tag);
+    if (action.kind === "visibleText") {
+      const nextRaw = spliceVisibleRange(raw, action.start, action.end, "");
+      this.applyContentRawEdit(bubbleRecord, nextRaw, action.start, edit.restoreTagCaretAnchor);
+      return;
+    }
+    const restoreTagCaretAnchor = getMarkerDeleteRestoreAnchor(raw, action.tag);
+    const nextRaw = removeTagAndPairedReset(raw, action.tag);
     renderRawToContent(content, nextRaw);
     content.dataset.raw = nextRaw;
     content.focus();
-    setCaretAtVisibleOffset(content, Math.min(startOff, rawToPlainText(nextRaw).length));
+    if (!setCaretAtTagCaretAnchor(content, restoreTagCaretAnchor)) {
+      setCaretAtVisibleOffset(content, Math.min(edit.caretOffset, rawToPlainText(nextRaw).length), edit.restoreSide);
+    }
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(chain);
     this.updateBubbleOverflow(bubbleRecord, chain.typeSelect.value);
@@ -2315,21 +2374,21 @@ export default class DocumentApp {
     if (!pendingEdit) return;
     const raw = content.dataset.raw ?? serializeContent(content);
     const start = pendingEdit.start;
-    const editRawStart = pendingEdit.rawStart;
-    const editRawEnd = pendingEdit.rawEnd;
     saveUndo(content);
     content._pendingInputEdit = null;
-    const nextRaw = `${raw.slice(0, editRawStart)}${text}${raw.slice(editRawEnd)}`;
-    this.applyContentRawEdit(bubbleRecord, nextRaw, start + text.length);
+    const insert = insertPendingText(raw, pendingEdit, text);
+    this.applyContentRawEdit(bubbleRecord, insert.nextRaw, start + text.length, insert.tagCaretAnchor);
   }
 
   // Apply a raw edit and refresh all dependent bubble UI.
-  applyContentRawEdit(bubbleRecord, nextRaw, caretOffset) {
+  applyContentRawEdit(bubbleRecord, nextRaw, caretOffset, tagCaretAnchor = null) {
     const { content, chain, fmtPopup } = bubbleRecord;
     renderRawToContent(content, nextRaw);
     content.dataset.raw = nextRaw;
     content.focus();
-    setCaretAtVisibleOffset(content, Math.min(caretOffset, rawToPlainText(nextRaw).length));
+    if (!setCaretAtTagCaretAnchor(content, tagCaretAnchor)) {
+      setCaretAtVisibleOffset(content, Math.min(caretOffset, rawToPlainText(nextRaw).length));
+    }
     this.captureTagSelection(content, true);
     this.syncMetaBar(bubbleRecord);
     this.refreshChoicePills(chain);
@@ -2386,8 +2445,13 @@ export default class DocumentApp {
     let oldSuffix = previousPlain.length;
     let newSuffix = nextPlain.length;
     let nextRaw = previousRaw;
+    let tagCaretAnchor = pendingEdit?.restoreTagCaretAnchor || pendingEdit?.tagCaretAnchor || null;
 
-    if (pendingEdit && ["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(pendingEdit.inputType)) {
+    if (
+      pendingEdit &&
+      (["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(pendingEdit.inputType) ||
+        (pendingEdit.hasDeleteTargetRange && ["deleteWordBackward", "deleteWordForward"].includes(pendingEdit.inputType)))
+    ) {
       prefix = pendingEdit.start;
       oldSuffix = pendingEdit.end;
       newSuffix = pendingEdit.start;
@@ -2399,7 +2463,9 @@ export default class DocumentApp {
       const insertedLen = Math.max(0, nextPlain.length - (previousPlain.length - (pendingEdit.end - pendingEdit.start)));
       const insertedText = nextPlain.slice(pendingEdit.start, pendingEdit.start + insertedLen);
       newSuffix = pendingEdit.start + insertedText.length;
-      nextRaw = spliceVisibleRange(previousRaw, pendingEdit.start, pendingEdit.end, insertedText, "after");
+      const insert = insertPendingText(previousRaw, pendingEdit, insertedText);
+      nextRaw = insert.nextRaw;
+      tagCaretAnchor = insert.tagCaretAnchor;
     } else {
       while (prefix < previousPlain.length && prefix < nextPlain.length && previousPlain[prefix] === nextPlain[prefix]) prefix++;
       while (oldSuffix > prefix && newSuffix > prefix && previousPlain[oldSuffix - 1] === nextPlain[newSuffix - 1]) {
@@ -2408,7 +2474,7 @@ export default class DocumentApp {
       }
       nextRaw = spliceVisibleRange(previousRaw, prefix, oldSuffix, nextPlain.slice(prefix, newSuffix));
     }
-    return { nextRaw, prefix, oldSuffix, newSuffix };
+    return { nextRaw, prefix, oldSuffix, newSuffix, tagCaretAnchor };
   }
 
   syncBubbleState(bubbleRecord) {
@@ -2437,9 +2503,10 @@ export default class DocumentApp {
     const pendingEdit = content._pendingInputEdit || null;
     content._pendingInputEdit = null;
     let nextRaw = previousRaw;
+    let rawEdit = null;
 
     if (previousPlain !== nextPlain) {
-      const rawEdit = this.buildRawFromVisibleEdit(previousRaw, previousPlain, nextPlain, pendingEdit);
+      rawEdit = this.buildRawFromVisibleEdit(previousRaw, previousPlain, nextPlain, pendingEdit);
       let { prefix, oldSuffix, newSuffix } = rawEdit;
       nextRaw = rawEdit.nextRaw;
       nextRaw = normalizeLeadingFormatDeletion(previousRaw, nextRaw, pendingEdit, prefix, oldSuffix, newSuffix, FORMAT_DEFS, applyFormatToRange);
@@ -2452,14 +2519,17 @@ export default class DocumentApp {
 
     // Re-render once from canonical raw, then restore the same visible selection/caret intent.
     renderRawToContent(content, nextRaw);
-    if (selectionOffsets) {
+    const restorePendingCaret = pendingEdit?.wasCollapsed && rawEdit;
+    if (selectionOffsets || restorePendingCaret) {
       const plainLength = rawToPlainText(nextRaw).length;
-      const start = Math.min(selectionOffsets.startOff, plainLength);
-      const end = Math.min(selectionOffsets.endOff, plainLength);
+      const start = Math.min(restorePendingCaret ? rawEdit.newSuffix : selectionOffsets.startOff, plainLength);
+      const end = restorePendingCaret ? start : Math.min(selectionOffsets.endOff, plainLength);
       content.focus();
       if (start === end) {
-        // Reapply the same visible offset together with the hidden-tag side captured before rerender.
-        setCaretAtVisibleOffset(content, start, pendingEdit?.collapsedBias || content._nextInputCollapsedBias || "after");
+        // Restore the caret captured before contenteditable moved it around a hidden marker.
+        if (!restorePendingCaret || !setCaretAtTagCaretAnchor(content, rawEdit.tagCaretAnchor)) {
+          setCaretAtVisibleOffset(content, start, restorePendingCaret ? pendingEdit.restoreSide : content._tagCaretSide || "after");
+        }
       } else {
         setSelectionVisibleOffsets(content, start, end);
       }

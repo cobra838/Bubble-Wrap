@@ -145,7 +145,9 @@ On export, the original soft-split line breaks are preserved. If the previous bu
 
     <div id="settings-modal" onclick="if(event.target===this)closeSettings()">
       <div id="settings-box">
-        <h3>Import settings</h3>
+        <div class="settings-columns">
+          <div class="settings-import-section">
+            <h3>Import settings</h3>
         <div class="settings-option">
           <div class="te-row">
             <label for="setting-disable-soft-split">Disable soft split</label>
@@ -197,6 +199,21 @@ On export, the original soft-split line breaks are preserved. If the previous bu
             </select>
           </div>
           <div class="settings-description">"Text {{delayxx}}text" → "Text{{delayxx}} text"</div>
+        </div>
+          </div>
+          <div class="settings-editor-section">
+            <h3>Editor settings</h3>
+            <div class="settings-option">
+          <div class="te-row">
+            <label for="setting-tag-caret-position">Tag caret position</label>
+            <select id="setting-tag-caret-position">
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          </div>
+          <div class="settings-description">false keeps separate caret positions before and after each tag instead of always moving past it.</div>
+            </div>
+          </div>
         </div>
         <div class="te-btns">
           <button onclick="closeSettings()">Close</button>

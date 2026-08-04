@@ -1777,8 +1777,33 @@ body[data-game="TotK"] .file-open-totk {
   border-radius: 8px;
   padding: 18px;
   min-width: 290px;
-  max-width: 420px;
+  width: min(760px, calc(100vw - 32px));
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+#settings-box .settings-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+#settings-box .settings-editor-section {
+  padding-left: 12px;
+  border-left: 1px solid #dde1e8;
+}
+
+#settings-box .settings-editor-section .te-row {
+  display: block;
+}
+
+#settings-box .settings-editor-section .te-row label {
+  display: block;
+  width: auto;
+  margin-bottom: 5px;
+}
+
+#settings-box .settings-editor-section .te-row select {
+  width: 100%;
 }
 
 #settings-box h3 {
@@ -1800,6 +1825,19 @@ body[data-game="TotK"] .file-open-totk {
   font-size: 11px;
   line-height: 1.35;
   color: #667;
+}
+
+@media (max-width: 560px) {
+  #settings-box .settings-columns {
+    display: block;
+  }
+
+  #settings-box .settings-editor-section {
+    padding: 16px 0 0;
+    margin-top: 16px;
+    border-top: 1px solid #dde1e8;
+    border-left: 0;
+  }
 }
 
 /* Bulk actions modal */
