@@ -2617,9 +2617,10 @@ export default class DocumentApp {
   syncMetaBar(bubbleRecord) {
     // Non-format tags are surfaced here as chips instead of inline text.
     const raw = bubbleRecord.content.dataset.raw ?? serializeContent(bubbleRecord.content);
-    const tags = parseRawTags(raw).filter((tag) => tag.name !== "color" && tag.name !== "size");
+    const tags = parseRawTags(raw);
     bubbleRecord.metaBar.innerHTML = "";
     tags.forEach((tag, tagIndex) => {
+      if (tag.name === "color" || tag.name === "size") return;
       const chip = document.createElement("button");
       chip.className = "meta-btn";
       chip.type = "button";
