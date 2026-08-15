@@ -88,7 +88,7 @@ const BOTW_ICON_ID_TO_NAME = {
   2: "LStickLeft",
   3: "LStickRight",
   4: "RStickUpDown",
-  5: "RStickRightLeft",
+  5: "RStickLeftRight",
   6: "DPadUp",
   7: "DPadDown",
   8: "DPadLeft",
@@ -104,14 +104,14 @@ const BOTW_ICON_ID_TO_NAME = {
   21: "RBumper0",
   23: "PlusButton",
   24: "MinusButton",
-  25: "RightArrow",
-  26: "LeftArrow",
-  27: "UpArrow",
+  25: "ArrowRight",
+  26: "ArrowLeft",
+  27: "ArrowUp",
   33: "LStick",
   34: "RStick",
   36: "Gamepad",
   37: "JumpButton1",
-  38: "XButton2"
+  38: "XButton0"
 };
 
 const BOTW_NAME_TO_ICON_ID = Object.fromEntries(Object.entries(BOTW_ICON_ID_TO_NAME).map(([id, name]) => [name, Number(id)]));
@@ -244,7 +244,7 @@ function msytIconToEditorValue(icon) {
     if (key === "d_pad_left") return "DPadLeft";
     if (key === "d_pad_right") return "DPadRight";
     if (key === "d_pad_up") return "DPadUp";
-    if (key === "r_stick_horizontal") return "RStickRightLeft";
+    if (key === "r_stick_horizontal") return "RStickLeftRight";
     if (key === "r_stick_press") return "RStick";
     if (key === "r_stick_vertical") return "RStickUpDown";
     if (key === "l_stick_back") return "LStickDown";
@@ -253,9 +253,9 @@ function msytIconToEditorValue(icon) {
     if (key === "l_stick_press") return "LStick";
     if (key === "l_stick_right") return "LStickRight";
     if (key === "gamepad") return "Gamepad";
-    if (key === "left_arrow") return "LeftArrow";
-    if (key === "right_arrow") return "RightArrow";
-    if (key === "up_arrow") return "UpArrow";
+    if (key === "left_arrow") return "ArrowLeft";
+    if (key === "right_arrow") return "ArrowRight";
+    if (key === "up_arrow") return "ArrowUp";
     return null;
   }
   if (icon && typeof icon === "object" && !Array.isArray(icon)) {
@@ -280,7 +280,7 @@ function editorValueToMsytIcon(value) {
   if (value === "DPadLeft") return "d_pad_left";
   if (value === "DPadRight") return "d_pad_right";
   if (value === "DPadUp") return "d_pad_up";
-  if (value === "RStickRightLeft") return "r_stick_horizontal";
+  if (value === "RStickLeftRight") return "r_stick_horizontal";
   if (value === "RStick") return "r_stick_press";
   if (value === "RStickUpDown") return "r_stick_vertical";
   if (value === "LStickDown") return "l_stick_back";
@@ -289,9 +289,9 @@ function editorValueToMsytIcon(value) {
   if (value === "LStick") return "l_stick_press";
   if (value === "LStickRight") return "l_stick_right";
   if (value === "Gamepad") return "gamepad";
-  if (value === "LeftArrow") return "left_arrow";
-  if (value === "RightArrow") return "right_arrow";
-  if (value === "UpArrow") return "up_arrow";
+  if (value === "ArrowLeft") return "left_arrow";
+  if (value === "ArrowRight") return "right_arrow";
+  if (value === "ArrowUp") return "up_arrow";
   if (id === 10 || id === 11) return { a: id };
   if (id === 12 || id === 37 || id === 38) return { x: id };
   if (id === 14 || id === 15) return { zl: id };

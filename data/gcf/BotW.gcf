@@ -181,7 +181,7 @@ msbt:
         2: LStickLeft
         3: LStickRight
         4: RStickUpDown # RStickVertical in msyt
-        5: RStickRightLeft # RStickHorizontal in msyt
+        5: RStickLeftRight # RStickHorizontal in msyt
         6: DPadUp
         7: DPadDown
         8: DPadLeft
@@ -197,14 +197,14 @@ msbt:
         21: RBumper0 # R in msyt
         23: PlusButton # Plus in msyt
         24: MinusButton # Minus in msyt
-        25: RightArrow
-        26: LeftArrow
-        27: UpArrow
+        25: ArrowRight
+        26: ArrowLeft
+        27: ArrowUp
         33: LStick # LStickPress in msyt
         34: RStick # RStickPress in msyt
         36: Gamepad # nintendo switch in TotK.gcf
         37: JumpButton1 # X in msyt
-        38: XButton2 # X in msyt
+        38: XButton0 # X in msyt
 
   # 1:8 — three choices based on game flags (wiki: "Choices Based on Flags")
   # Structure: VarType(u16) + 3×(FlagName:str, ChoiceIndex:u16) + defaultIndex(u16) + cancelIndex(u16)

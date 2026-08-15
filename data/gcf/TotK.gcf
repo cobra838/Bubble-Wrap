@@ -1,4 +1,4 @@
-# File from https://gitlab.com/AeonSake/msbt-editor/-/blob/3a8be79b621899292cecd69255aff06c8daae017/configs/TotK.gcf
+# File from https://gitlab.com/AeonSake/msbt-editor/-/blob/feb99c3c2c1e564856c08753d2487ab2f6988b81/configs/TotK.gcf
 
 game: "The Legend of Zelda: Tears of the Kingdom"
 
@@ -128,7 +128,7 @@ msbt:
             2: LStickLeft
             3: LStickRight
             4: RStickUpDown
-            5: RStickRightLeft
+            5: RStickLeftRight
             6: DPadUp
             7: DPadDown
             8: DPadLeft
@@ -143,25 +143,25 @@ msbt:
             17: SprintButton1
             18: SprintButton2
             19: SprintButton3
-            20: SprintButton4
+            20: LBumper
             21: RBumper0
-            22: LBumper
+            22: ZRTrigger
             23: PlusButton
             24: MinusButton
-            25: RightArrow
-            26: LeftArrow
-            27: UpArrow
-            28: DownArrow
-            29: UpRightArrow
-            30: UpLeftArrow
-            31: DownLeftArrow
-            32: DownRightArrow
+            25: ArrowRight
+            26: ArrowLeft
+            27: ArrowUp
+            28: ArrowDown
+            29: ArrowUpRight
+            30: ArrowUpLeft
+            31: ArrowDownLeft
+            32: ArrowDownRight
             33: LStick
             34: RStick
             35: LStickLeftRight
             36: NintendoSwitch
             37: JumpButton1
-            38: XButton2
+            38: XButton0
             39: BButton
             40: XButton1
             41: PristineWeaponSparkle
